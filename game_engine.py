@@ -15,7 +15,11 @@ def draft_crew(rng: random.Random | None = None) -> dict[str, dict]:
     rng = rng or random.Random()
     role_names = list(ROLES)
     candidates = {
-        role: [item for item in CHARACTERS if role in item["roles"]]
+        role: [
+            item
+            for item in CHARACTERS
+            if item.get("draftable", True) and role in item["roles"]
+        ]
         for role in role_names
     }
     ordered_roles = sorted(role_names, key=lambda role: len(candidates[role]))
@@ -55,7 +59,9 @@ def reroll_role(
     options = [
         item
         for item in CHARACTERS
-        if role in item["roles"] and item["name"] not in used
+        if item.get("draftable", True)
+        and role in item["roles"]
+        and item["name"] not in used
     ]
     if not options:
         return crew
@@ -80,12 +86,10 @@ def team_summary(crew: dict[str, dict]) -> dict[str, float]:
     attack = sum(item["attack"] for item in crew.values())
     defense = sum(item["defense"] for item in crew.values())
     tactician = crew.get("Tático")
-    leader = crew.get("Líder")
     tactical_score = role_score(tactician, "Tático") if tactician else 5
-    leader_score = role_score(leader, "Líder") if leader else 0
-    tactical_modifier = (tactical_score - 5) * 0.035
-    leader_bonus = leader_score * 0.018
-    power = (attack + defense) * (1 + tactical_modifier + leader_bonus)
+    tactical_modifier = tactical_score * 0.02
+    leader_bonus = 0.50
+    power = attack + defense
     return {
         "attack": attack,
         "defense": defense,
@@ -99,7 +103,6 @@ def _build_fighter(
     character: dict,
     assigned_role: str,
     *,
-    hp_multiplier: float = 1.0,
     attack_override: int | None = None,
     defense_override: int | None = None,
 ) -> dict:
@@ -111,22 +114,60 @@ def _build_fighter(
         "roles": copy.deepcopy(character["roles"]),
         "skills": copy.deepcopy(character["skills"]),
         "rank": character["rank"],
+        "special": character.get("special"),
         "attack": attack,
         "defense": defense,
-        "max_hp": max(10, round((16 + defense * 4) * hp_multiplier)),
-        "hp": max(10, round((16 + defense * 4) * hp_multiplier)),
+        "max_hp": max(1, defense),
+        "hp": max(1, defense),
         "alive": True,
     }
 
 
-def start_battle(crew: dict[str, dict], stage: dict) -> dict:
+def start_battle(
+    crew: dict[str, dict],
+    stage: dict,
+    rng: random.Random | None = None,
+) -> dict:
+    rng = rng or random.Random()
     player = [
         _build_fighter(character, role)
         for role, character in crew.items()
     ]
+    player_names = {fighter["name"] for fighter in player}
+    enemy_names = list(stage["enemies"])
+    available = [
+        item
+        for item in CHARACTERS
+        if item["name"] not in enemy_names
+        and item["name"] not in player_names
+        and item["faction"] != "Chapéus de Palha"
+    ]
+    reinforcements: list[str] = []
+    strong_chance = min(0.25, stage["location_index"] * 0.05)
+    strong_encounter = rng.random() < strong_chance
+
+    if len(enemy_names) < 6 and strong_encounter:
+        strong_options = [
+            item for item in available if item["rank"] == "S"
+        ]
+        if strong_options:
+            chosen = rng.choice(strong_options)
+            enemy_names.append(chosen["name"])
+            reinforcements.append(chosen["name"])
+            available.remove(chosen)
+
+    while len(enemy_names) < 6 and available:
+        regular_options = [
+            item for item in available if item["rank"] != "S"
+        ]
+        chosen = rng.choice(regular_options or available)
+        enemy_names.append(chosen["name"])
+        reinforcements.append(chosen["name"])
+        available.remove(chosen)
+
     adjustments = stage.get("enemy_adjustments", {})
     enemies = []
-    for name in stage["enemies"]:
+    for name in enemy_names:
         character = CHARACTER_BY_NAME[name]
         adjustment = adjustments.get(name, {})
         primary_role = character["roles"][0]
@@ -134,18 +175,27 @@ def start_battle(crew: dict[str, dict], stage: dict) -> dict:
             _build_fighter(
                 character,
                 primary_role,
-                hp_multiplier=adjustment.get("hp_multiplier", 1.0),
                 attack_override=adjustment.get("attack"),
                 defense_override=adjustment.get("defense"),
             )
         )
+    log = [f"⚓ Batalha iniciada em {stage['name']}."]
+    if reinforcements:
+        log.append(
+            "🚨 Reforços inimigos: " + ", ".join(reinforcements) + "."
+        )
+    if strong_encounter:
+        log.append("🔥 Encontro forte ativado nesta batalha.")
     return {
         "round": 0,
         "stage": copy.deepcopy(stage),
         "player": player,
         "enemies": enemies,
         "status": "active",
-        "log": [f"⚓ Batalha iniciada em {stage['name']}."],
+        "log": log,
+        "strong_encounter": strong_encounter,
+        "strong_chance": strong_chance,
+        "reinforcements": reinforcements,
         "spy_resolved": False,
         "leader_fell": False,
         "command_mode": "leader",
@@ -170,27 +220,37 @@ def _find_role(fighters: Iterable[dict], role: str) -> dict | None:
 def _damage(
     attacker: dict,
     defender: dict,
-    attack_multiplier: float,
-    defense_multiplier: float,
     rng: random.Random,
-) -> tuple[int, bool]:
-    role_bonus = 1.0
+    tactical_crit_bonus: float = 0.0,
+) -> tuple[int, bool, bool, bool]:
+    if defender.get("special") == "Logia" and rng.random() < 0.50:
+        return 0, False, False, True
+
     critical_chance = 0.05
     if attacker["assigned_role"] == "Atacante":
         assault = attacker["skills"].get("Atacante", 0)
-        role_bonus += assault * 0.025
-        critical_chance += assault * 0.018
+        critical_chance += assault * 0.01 + tactical_crit_bonus
     critical = rng.random() < critical_chance
-    critical_multiplier = 1.55 if critical else 1.0
-    raw = (
-        attacker["attack"]
-        * rng.uniform(1.45, 2.10)
-        * attack_multiplier
-        * role_bonus
-        * critical_multiplier
-    )
-    mitigation = defender["defense"] * rng.uniform(0.48, 0.72) * defense_multiplier
-    return max(1, round(raw - mitigation)), critical
+    damage = max(1, (attacker["attack"] + 1) // 2)
+    if critical:
+        damage *= 2
+
+    defense_chance = defender["defense"] * 0.05
+    if defender["assigned_role"] == "Defensor":
+        defense_chance += defender["skills"].get("Defensor", 0) * 0.02
+    defended = rng.random() < min(0.75, defense_chance)
+    if defended:
+        damage = max(1, (damage + 1) // 2)
+    return damage, critical, defended, False
+
+
+def _tactical_crit_bonus(fighters: list[dict], attacker: dict) -> float:
+    if attacker["assigned_role"] != "Atacante":
+        return 0.0
+    tactician = _find_role(fighters, "Tático")
+    if not tactician:
+        return 0.0
+    return tactician["skills"].get("Tático", 0) * 0.02
 
 
 def _apply_hit(target: dict, damage: int) -> bool:
@@ -225,7 +285,7 @@ def _resolve_spy(battle: dict, rng: random.Random) -> None:
         target["hp"] = 0
         target["alive"] = False
         battle["log"].append(
-            f"🗡️ {spy['name']} eliminou {target['name']} antes da primeira rodada."
+            f"🗡️ {spy['name']} nocauteou {target['name']} antes da primeira rodada."
         )
     else:
         battle["log"].append(
@@ -236,7 +296,7 @@ def _resolve_spy(battle: dict, rng: random.Random) -> None:
         spy["hp"] = 0
         spy["alive"] = False
         battle["log"].append(
-            f"☠️ {spy['name']} foi descoberto e caiu durante a infiltração."
+            f"💫 {spy['name']} foi descoberto e nocauteado durante a infiltração."
         )
 
 
@@ -346,7 +406,7 @@ def play_round(
     if not player_alive or not enemy_alive:
         return _finalize_status(battle)
 
-    attack_multiplier, defense_multiplier, notes = _command_multipliers(battle)
+    _, _, notes = _command_multipliers(battle)
     battle["log"].extend(notes)
 
     for attacker in list(player_alive):
@@ -354,19 +414,21 @@ def play_round(
         if not attacker["alive"] or not enemy_alive:
             break
         target = rng.choice(enemy_alive)
-        damage, critical = _damage(
+        tactical_bonus = _tactical_crit_bonus(battle["player"], attacker)
+        damage, critical, defended, dodged = _damage(
             attacker,
             target,
-            attack_multiplier,
-            1.0,
             rng,
+            tactical_bonus,
         )
         eliminated = _apply_hit(target, damage)
         marker = " CRÍTICO" if critical else ""
-        ending = " e eliminou o alvo" if eliminated else ""
+        defense_marker = " DEFENDIDO" if defended else ""
+        dodge_marker = " DESVIOU COM LOGIA" if dodged else ""
+        ending = " e nocauteou o alvo" if eliminated else ""
         battle["log"].append(
             f"⚔️ {attacker['name']} causou {damage} em "
-            f"{target['name']}{marker}{ending}."
+            f"{target['name']}{marker}{defense_marker}{dodge_marker}{ending}."
         )
 
     for attacker in list(_alive(battle["enemies"])):
@@ -384,23 +446,21 @@ def play_round(
                 f"🛡️ {target['name']} interceptou o golpe destinado a "
                 f"{original_target['name']}."
             )
-        enemy_multiplier = battle["stage"]["difficulty"]
-        damage, critical = _damage(
+        tactical_bonus = _tactical_crit_bonus(battle["enemies"], attacker)
+        damage, critical, defended, dodged = _damage(
             attacker,
             target,
-            enemy_multiplier,
-            defense_multiplier,
             rng,
+            tactical_bonus,
         )
-        if target["assigned_role"] == "Defensor":
-            guard_score = target["skills"].get("Defensor", 0)
-            damage = max(1, round(damage * (1 - guard_score * 0.025)))
         eliminated = _apply_hit(target, damage)
         marker = " CRÍTICO" if critical else ""
-        ending = " e derrubou o alvo" if eliminated else ""
+        defense_marker = " DEFENDIDO" if defended else ""
+        dodge_marker = " DESVIOU COM LOGIA" if dodged else ""
+        ending = " e nocauteou o alvo" if eliminated else ""
         battle["log"].append(
             f"💥 {attacker['name']} causou {damage} em "
-            f"{target['name']}{marker}{ending}."
+            f"{target['name']}{marker}{defense_marker}{dodge_marker}{ending}."
         )
 
     return _finalize_status(battle)
@@ -412,51 +472,40 @@ def _finalize_status(battle: dict) -> dict:
         battle["log"].append("🏆 Vitória! A rota para a próxima ilha foi aberta.")
     elif not _alive(battle["player"]):
         battle["status"] = "defeat"
-        battle["log"].append("☠️ A tripulação foi derrotada nesta tentativa.")
+        battle["log"].append("💫 Toda a tripulação foi nocauteada.")
     return battle
 
 
 def recruitment_roll(
     battle: dict,
     existing_names: set[str],
+    occupied_reserve_roles: set[str] | None = None,
     rng: random.Random | None = None,
 ) -> dict:
     rng = rng or random.Random()
-    leader = _find_role(battle["player"], "Líder")
-    if not leader:
-        return {
-            "attempted": False,
-            "success": False,
-            "message": "O líder caiu; não foi possível tentar o recrutamento.",
-        }
+    occupied_reserve_roles = occupied_reserve_roles or set()
 
     candidates = [
         enemy
         for enemy in battle["enemies"]
         if enemy["name"] not in existing_names
+        and enemy["assigned_role"] not in occupied_reserve_roles
     ]
     if not candidates:
         return {
             "attempted": False,
             "success": False,
-            "message": "Nenhum inimigo novo estava disponível para recrutamento.",
+            "message": "Não há inimigo compatível com uma função livre na reserva.",
         }
 
-    candidate = next(
-        (
-            enemy
-            for enemy in candidates
-            if enemy["name"] == battle["stage"]["boss"]
-        ),
-        rng.choice(candidates),
-    )
-    leader_score = leader["skills"].get("Líder", 0)
-    chance = min(0.68, 0.10 + leader_score * 0.05)
+    candidate = rng.choice(candidates)
+    reserve_role = candidate["assigned_role"]
+    chance = 0.50
     roll = rng.random()
     success = roll <= chance
     if success:
         message = (
-            f"🤝 {candidate['name']} aceitou entrar para a reserva "
+            f"🤝 {candidate['name']} entrou na reserva como {reserve_role} "
             f"({roll:.0%} ≤ {chance:.0%})."
         )
     else:
@@ -468,6 +517,7 @@ def recruitment_roll(
         "attempted": True,
         "success": success,
         "candidate": candidate["name"],
+        "reserve_role": reserve_role,
         "chance": chance,
         "roll": roll,
         "message": message,
@@ -478,12 +528,12 @@ def replace_with_reserve(
     crew: dict[str, dict],
     reserve_name: str,
     role: str,
-) -> tuple[dict[str, dict], str]:
+) -> tuple[dict[str, dict], str | None]:
     reserve = CHARACTER_BY_NAME[reserve_name]
     if role not in reserve["roles"]:
         raise ValueError(f"{reserve_name} não pode exercer a função {role}.")
     updated = copy.deepcopy(crew)
-    removed_name = updated[role]["name"]
+    removed_name = updated[role]["name"] if role in updated else None
     updated[role] = copy.deepcopy(reserve)
     return updated, removed_name
 

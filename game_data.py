@@ -8,8 +8,8 @@ ROLES = OrderedDict(
         "Líder": {
             "icon": "☠️",
             "description": (
-                "Amplia os atributos do time e pode recrutar um inimigo "
-                "derrotado por meio de uma rolagem."
+                "Comanda a equipe e pode recrutar um inimigo derrotado "
+                "por meio de uma rolagem."
             ),
         },
         "Vice-líder": {
@@ -22,8 +22,8 @@ ROLES = OrderedDict(
         "Atacante": {
             "icon": "⚔️",
             "description": (
-                "Causa mais dano e tem maior chance de eliminar, mas também "
-                "fica mais exposto aos ataques inimigos."
+                "Recebe chance crítica própria e pode causar o dobro do dano, "
+                "mas também fica mais exposto aos ataques inimigos."
             ),
         },
         "Defensor": {
@@ -36,15 +36,15 @@ ROLES = OrderedDict(
         "Espião": {
             "icon": "🗡️",
             "description": (
-                "Pode eliminar um oponente antes da primeira rodada, correndo "
-                "também o risco de morrer durante a infiltração."
+                "Quando a infiltração tem sucesso, elimina o alvo antes da "
+                "primeira rodada; também corre o risco de morrer na missão."
             ),
         },
         "Tático": {
             "icon": "🧭",
             "description": (
-                "Aumenta ou reduz a eficiência de todas as outras funções "
-                "conforme sua pontuação tática."
+                "Aumenta a chance de acerto crítico dos personagens escalados "
+                "como atacantes."
             ),
         },
     }
@@ -64,6 +64,8 @@ def character(
     guard: int = 0,
     espionage: int = 0,
     tactics: int = 0,
+    special: str | None = None,
+    draftable: bool = True,
     faction: str,
 ) -> dict:
     return {
@@ -73,6 +75,8 @@ def character(
         "defense": defense,
         "rank": rank,
         "faction": faction,
+        "special": special,
+        "draftable": draftable,
         "skills": {
             "Líder": leadership,
             "Vice-líder": vice,
@@ -172,6 +176,17 @@ CHARACTERS = [
         "S",
         leadership=10,
         guard=10,
+        faction="Marinha",
+    ),
+    character(
+        "Smoker",
+        ("Líder",),
+        9,
+        9,
+        "S",
+        leadership=9,
+        special="Logia",
+        draftable=False,
         faction="Marinha",
     ),
     character(
@@ -411,17 +426,14 @@ STAGES = [
     {
         "location_index": 5,
         "name": "Reverse Mountain",
-        "boss": "Garp",
-        "enemies": ["Garp", "Morgan", "Koby", "Helmeppo"],
+        "boss": "Smoker",
+        "enemies": ["Smoker"],
+        "random_enemy_team": True,
         "difficulty": 1.05,
-        "enemy_adjustments": {
-            "Garp": {"attack": 8, "defense": 8, "hp_multiplier": 0.85}
-        },
         "description": (
-            "Último bloqueio da Marinha antes da subida para a Grand Line. "
-            "Vença para concluir a demo."
+            "Smoker e sua habilidade Logia bloqueiam a entrada da Grand Line. "
+            "O restante da força inimiga é imprevisível."
         ),
         "reward": 3_000,
     },
 ]
-

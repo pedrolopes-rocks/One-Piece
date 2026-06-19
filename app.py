@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import random
+import time
 
 import pandas as pd
 import streamlit as st
@@ -315,28 +316,40 @@ st.html(CSS)
 def initialize_state() -> None:
     defaults = {
         "crew": {},
-        "reserves": [],
+        "reserves": {},
         "stage_index": 0,
         "battle": None,
         "berries": 0,
         "wins": 0,
         "last_recruitment": None,
         "game_seed": random.randint(1, 999_999),
+        "action_mode": False,
+        "action_speed": "Normal",
     }
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
+    if isinstance(st.session_state.reserves, list):
+        migrated = {}
+        for name in st.session_state.reserves:
+            for role in CHARACTER_BY_NAME[name]["roles"]:
+                if role not in migrated:
+                    migrated[role] = name
+                    break
+        st.session_state.reserves = migrated
 
 
 def reset_campaign() -> None:
     st.session_state.crew = {}
-    st.session_state.reserves = []
+    st.session_state.reserves = {}
     st.session_state.stage_index = 0
     st.session_state.battle = None
     st.session_state.berries = 0
     st.session_state.wins = 0
     st.session_state.last_recruitment = None
     st.session_state.game_seed = random.randint(1, 999_999)
+    st.session_state.action_mode = False
+    st.session_state.action_speed = "Normal"
 
 
 def crew_names() -> set[str]:
@@ -372,6 +385,7 @@ def render_crew_grid() -> None:
     cards = "".join(
         crew_card(role, st.session_state.crew[role])
         for role in ROLES
+        if role in st.session_state.crew
     )
     st.html(f'<div class="crew-grid">{cards}</div>')
 
@@ -414,7 +428,7 @@ def fighter_rows(fighters: list[dict]) -> str:
     rows = []
     for fighter in fighters:
         percent = 0 if fighter["max_hp"] == 0 else fighter["hp"] / fighter["max_hp"] * 100
-        state = "☠" if not fighter["alive"] else f"{fighter['hp']}"
+        state = "KO" if not fighter["alive"] else f"{fighter['hp']}"
         rows.append(
             f"""
             <div class="fighter-row">
@@ -430,11 +444,15 @@ def fighter_rows(fighters: list[dict]) -> str:
 def finish_victory() -> None:
     battle = st.session_state.battle
     stage = battle["stage"]
-    existing = crew_names() | set(st.session_state.reserves)
-    result = recruitment_roll(battle, existing)
+    existing = crew_names() | set(st.session_state.reserves.values())
+    result = recruitment_roll(
+        battle,
+        existing,
+        set(st.session_state.reserves),
+    )
     st.session_state.last_recruitment = result
     if result.get("success"):
-        st.session_state.reserves.append(result["candidate"])
+        st.session_state.reserves[result["reserve_role"]] = result["candidate"]
     st.session_state.berries += stage["reward"]
     st.session_state.wins += 1
     st.session_state.stage_index += 1
@@ -455,11 +473,35 @@ def render_battle() -> None:
         st.html(f'<div class="battle-panel">{fighter_rows(battle["enemies"])}</div>')
 
     controls, history = st.columns([0.35, 0.65])
+    with history:
+        st.markdown("#### Diário da batalha")
+        history_box = st.empty()
+        history_box.code("\n".join(battle["log"][-16:]), language=None)
     with controls:
         st.metric("Rodada", battle["round"])
         if battle["status"] == "active":
+            st.toggle("🎬 Modo ação", key="action_mode")
+            if st.session_state.action_mode:
+                st.select_slider(
+                    "Velocidade",
+                    options=["Lenta", "Normal", "Rápida"],
+                    key="action_speed",
+                )
             if st.button("⚔️ Resolver próxima rodada", type="primary", width="stretch"):
+                previous_log_size = len(battle["log"])
                 st.session_state.battle = play_round(battle)
+                if st.session_state.action_mode:
+                    delays = {"Lenta": 1.15, "Normal": 0.55, "Rápida": 0.18}
+                    delay = delays[st.session_state.action_speed]
+                    new_entries = battle["log"][previous_log_size:]
+                    visible_log = battle["log"][:previous_log_size]
+                    for entry in new_entries:
+                        visible_log.append(entry)
+                        history_box.code(
+                            "\n".join(visible_log[-16:]),
+                            language=None,
+                        )
+                        time.sleep(delay)
                 st.rerun()
         elif battle["status"] == "victory":
             st.success("Vitória confirmada.")
@@ -467,16 +509,12 @@ def render_battle() -> None:
                 finish_victory()
                 st.rerun()
         else:
-            st.error("A tripulação perdeu esta tentativa.")
-            if st.button("🔄 Preparar nova tentativa", width="stretch"):
-                st.session_state.battle = start_battle(
-                    st.session_state.crew,
-                    STAGES[st.session_state.stage_index],
-                )
+            st.error(
+                "Toda a tripulação foi nocauteada. A campanha terminou."
+            )
+            if st.button("🔁 Reiniciar campanha", width="stretch"):
+                reset_campaign()
                 st.rerun()
-    with history:
-        st.markdown("#### Diário da batalha")
-        st.code("\n".join(battle["log"][-16:]), language=None)
 
 
 initialize_state()
@@ -515,7 +553,9 @@ with journey_tab:
         )
         st.balloons()
     elif not st.session_state.crew:
-        st.warning("Forme a tripulação na aba Tripulação antes de partir.")
+        st.warning(
+            "Não há sobreviventes disponíveis. Reinicie a campanha para formar outra tripulação."
+        )
     elif st.session_state.battle is None:
         stage = STAGES[st.session_state.stage_index]
         col_info, col_action = st.columns([0.72, 0.28])
@@ -543,7 +583,13 @@ with journey_tab:
 with crew_tab:
     action1, action2, action3 = st.columns([0.34, 0.33, 0.33])
     with action1:
-        if st.button("🎲 Sortear tripulação completa", type="primary", width="stretch"):
+        if st.button(
+            "🎲 Sortear tripulação completa",
+            type="primary",
+            width="stretch",
+            disabled=st.session_state.stage_index > 0,
+            help="Disponível apenas antes da primeira batalha.",
+        ):
             st.session_state.crew = draft_crew()
             st.session_state.battle = None
             st.session_state.last_recruitment = None
@@ -567,12 +613,15 @@ with crew_tab:
         st.subheader("Rerrolagem por função")
         cols = st.columns(3)
         for index, role in enumerate(ROLES):
+            if role not in st.session_state.crew:
+                continue
             character_name = st.session_state.crew[role]["name"]
             with cols[index % 3]:
                 if st.button(
                     f"{ROLES[role]['icon']} {role}: {character_name}",
                     key=f"reroll_{role}",
                     width="stretch",
+                    disabled=st.session_state.stage_index > 0,
                     help=f"Sortear novamente apenas a função {role}.",
                 ):
                     st.session_state.crew = reroll_role(st.session_state.crew, role)
@@ -583,23 +632,37 @@ with crew_tab:
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Ataque base", int(summary["attack"]))
         m2.metric("Defesa base", int(summary["defense"]))
-        m3.metric("Bônus do líder", f"{summary['leader_bonus']:+.1%}")
-        m4.metric("Modificador tático", f"{summary['tactical_modifier']:+.1%}")
+        m3.metric("Chance de recrutamento", "50%")
+        m4.metric("Crítico dado pelo tático", f"+{summary['tactical_modifier']:.1%}")
 
     st.subheader("Reserva recrutada")
     if not st.session_state.reserves:
         st.caption("Inimigos recrutados após vitórias aparecerão aqui.")
     else:
-        reserve_name = st.selectbox("Personagem da reserva", st.session_state.reserves)
-        eligible_roles = CHARACTER_BY_NAME[reserve_name]["roles"]
-        target_role = st.selectbox("Função que ele assumirá", eligible_roles)
+        reserve_role = st.selectbox(
+            "Vaga da reserva",
+            list(st.session_state.reserves),
+            format_func=lambda role: (
+                f"{role}: {st.session_state.reserves[role]}"
+            ),
+        )
+        reserve_name = st.session_state.reserves[reserve_role]
+        st.caption(
+            f"{reserve_name} foi recrutado especificamente para a função "
+            f"{reserve_role}."
+        )
         if st.button("Escalar personagem da reserva"):
             old_crew = st.session_state.crew
-            updated, removed = replace_with_reserve(old_crew, reserve_name, target_role)
+            updated, removed = replace_with_reserve(
+                old_crew,
+                reserve_name,
+                reserve_role,
+            )
             st.session_state.crew = updated
-            st.session_state.reserves.remove(reserve_name)
-            if removed not in st.session_state.reserves:
-                st.session_state.reserves.append(removed)
+            if removed:
+                st.session_state.reserves[reserve_role] = removed
+            else:
+                st.session_state.reserves.pop(reserve_role)
             st.session_state.battle = None
             st.rerun()
 
