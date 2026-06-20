@@ -1,347 +1,207 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from pathlib import Path
+import re
+import xml.etree.ElementTree as ET
+import zipfile
 
 
 ROLES = OrderedDict(
     {
-        "Líder": {
+        "Capitão": {
             "icon": "☠️",
             "description": (
-                "Comanda a equipe e pode trazer um adversário derrotado "
-                "para a reserva."
+                "Aumenta o poder de combate da tripulação e melhora a chance "
+                "de recrutar adversários após uma vitória."
             ),
         },
-        "Vice-líder": {
+        "Imediato": {
             "icon": "⭐",
             "description": (
-                "Assume o comando se o líder cair. Sua liderança determina "
-                "quanto do bônus original será preservado."
+                "Assume o comando quando o Capitão é derrotado e preserva "
+                "parte do bônus de combate da equipe."
             ),
         },
         "Atacante": {
             "icon": "⚔️",
-            "description": (
-                "Concentra o poder ofensivo da equipe e pode causar golpes "
-                "críticos, mas atrai mais ataques inimigos."
-            ),
+            "description": "Recebe 5 pontos adicionais de ataque em combate.",
         },
         "Defensor": {
             "icon": "🛡️",
             "description": (
-                "Pode interceptar golpes destinados a aliados e se sacrificar "
-                "para manter membros importantes vivos."
-            ),
-        },
-        "Espião": {
-            "icon": "🗡️",
-            "description": (
-                "Quando a infiltração tem sucesso, elimina o alvo antes da "
-                "primeira rodada; também corre o risco de morrer na missão."
+                "Recebe 5 pontos adicionais de defesa e pode interceptar "
+                "golpes destinados a aliados."
             ),
         },
         "Tático": {
             "icon": "🧭",
+            "description": "Aumenta a chance de golpes críticos da equipe.",
+        },
+        "Espião": {
+            "icon": "🗡️",
             "description": (
-                "Amplia a eficiência ofensiva dos integrantes designados "
-                "para o ataque."
+                "Pode ferir ou eliminar um inimigo antes da batalha, mas "
+                "também corre o risco de sofrer dano na infiltração."
             ),
         },
     }
 )
 
+RANK_ORDER = {
+    "SSS": 9,
+    "SS": 8,
+    "S": 7,
+    "A": 6,
+    "B": 5,
+    "C": 4,
+    "D": 3,
+    "E": 2,
+    "F": 1,
+}
 
-def character(
-    name: str,
-    roles: tuple[str, ...],
-    attack: int,
-    defense: int,
-    rank: str,
-    *,
-    leadership: int = 0,
-    vice: int = 0,
-    assault: int = 0,
-    guard: int = 0,
-    espionage: int = 0,
-    tactics: int = 0,
-    special: str | None = None,
-    draftable: bool = True,
-    faction: str,
-) -> dict:
-    return {
-        "name": name,
-        "roles": list(roles),
-        "attack": attack,
-        "defense": defense,
-        "rank": rank,
-        "faction": faction,
-        "special": special,
-        "draftable": draftable,
+# Valor interno representativo de cada faixa. A interface mostra somente o rank.
+RANK_SCORE = {
+    "SSS": 100,
+    "SS": 97,
+    "S": 92,
+    "A": 85,
+    "B": 75,
+    "C": 65,
+    "D": 55,
+    "E": 40,
+    "F": 15,
+}
+
+DATA_FILE = Path(__file__).with_name("assets") / "rei_dos_mares.xlsx"
+_MAIN_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+_REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+
+
+def _read_workbook(path: Path) -> dict[str, list[dict[str, str]]]:
+    """Read the small game workbook without requiring openpyxl at runtime."""
+    namespaces = {"m": _MAIN_NS, "r": _REL_NS}
+    with zipfile.ZipFile(path) as archive:
+        shared_strings: list[str] = []
+        if "xl/sharedStrings.xml" in archive.namelist():
+            root = ET.fromstring(archive.read("xl/sharedStrings.xml"))
+            shared_strings = [
+                "".join(
+                    node.text or ""
+                    for node in item.iterfind(".//m:t", namespaces)
+                )
+                for item in root.findall("m:si", namespaces)
+            ]
+
+        workbook = ET.fromstring(archive.read("xl/workbook.xml"))
+        relationships = ET.fromstring(
+            archive.read("xl/_rels/workbook.xml.rels")
+        )
+        targets = {
+            item.attrib["Id"]: item.attrib["Target"]
+            for item in relationships
+        }
+        sheets: dict[str, list[dict[str, str]]] = {}
+
+        for sheet in workbook.find("m:sheets", namespaces) or []:
+            relation_id = sheet.attrib[f"{{{_REL_NS}}}id"]
+            target = targets[relation_id]
+            sheet_path = (
+                target if target.startswith("xl/") else f"xl/{target.lstrip('/')}"
+            )
+            root = ET.fromstring(archive.read(sheet_path))
+            rows: list[dict[str, str]] = []
+            for row in root.findall(".//m:sheetData/m:row", namespaces):
+                values: dict[str, str] = {}
+                for cell in row.findall("m:c", namespaces):
+                    reference = cell.attrib.get("r", "")
+                    match = re.match(r"[A-Z]+", reference)
+                    if not match:
+                        continue
+                    column = match.group(0)
+                    value_node = cell.find("m:v", namespaces)
+                    cell_type = cell.attrib.get("t")
+                    if cell_type == "s" and value_node is not None:
+                        value = shared_strings[int(value_node.text or "0")]
+                    elif cell_type == "inlineStr":
+                        value = "".join(
+                            node.text or ""
+                            for node in cell.iterfind(".//m:t", namespaces)
+                        )
+                    else:
+                        value = value_node.text if value_node is not None else ""
+                    values[column] = (value or "").strip()
+                if values.get("A"):
+                    rows.append(values)
+            sheets[sheet.attrib["name"]] = rows
+    return sheets
+
+
+def _character_from_row(row: dict[str, str], *, enemy: bool) -> dict:
+    roles = [row["F"]]
+    role_ranks = {row["F"]: row["G"]}
+    if row.get("H"):
+        roles.append(row["H"])
+        role_ranks[row["H"]] = row["I"]
+
+    draw_groups = [
+        group for group in (row.get("C"), row.get("D")) if group
+    ]
+    character = {
+        "name": row["A"],
+        "faction": row.get("B") or row.get("C") or "Sem filiação",
+        "draw_groups": draw_groups,
+        "arc": row.get("E", ""),
+        "roles": roles,
+        "role_ranks": role_ranks,
         "skills": {
-            "Líder": leadership,
-            "Vice-líder": vice,
-            "Atacante": assault,
-            "Defensor": guard,
-            "Espião": espionage,
-            "Tático": tactics,
+            role: RANK_SCORE[role_rank]
+            for role, role_rank in role_ranks.items()
         },
+        "attack_rank": row["J"],
+        "attack": int(float(row["K"])),
+        "defense_rank": row["L"],
+        "defense": int(float(row["M"])),
+        "hp_rank": row["N"],
+        "max_hp": int(float(row["O"])),
+        "rank": row["P"],
+        "enemy": enemy,
     }
+    if enemy:
+        character["recruitment_chance"] = float(row["Q"])
+    return character
 
 
-# Escala inicial do East Blue: 1 a 10. Regiões futuras podem ultrapassar 10.
-CHARACTERS = [
-    character(
-        "Luffy",
-        ("Líder", "Atacante"),
-        8,
-        7,
-        "A",
-        leadership=9,
-        assault=8,
-        faction="Chapéus de Palha",
-    ),
-    character(
-        "Zoro",
-        ("Vice-líder", "Atacante"),
-        9,
-        7,
-        "A",
-        vice=9,
-        assault=9,
-        faction="Chapéus de Palha",
-    ),
-    character(
-        "Nami",
-        ("Tático", "Espião"),
-        3,
-        4,
-        "B",
-        espionage=8,
-        tactics=10,
-        faction="Chapéus de Palha",
-    ),
-    character(
-        "Usopp",
-        ("Líder", "Tático"),
-        4,
-        3,
-        "B",
-        leadership=6,
-        tactics=8,
-        faction="Chapéus de Palha",
-    ),
-    character(
-        "Sanji",
-        ("Atacante", "Tático"),
-        8,
-        7,
-        "A",
-        assault=8,
-        tactics=7,
-        faction="Chapéus de Palha",
-    ),
-    character(
-        "Koby",
-        ("Tático",),
-        2,
-        3,
-        "C",
-        tactics=5,
-        faction="Marinha",
-    ),
-    character(
-        "Helmeppo",
-        ("Espião",),
-        2,
-        2,
-        "D",
-        espionage=4,
-        faction="Marinha",
-    ),
-    character(
-        "Morgan",
-        ("Líder", "Espião"),
-        6,
-        6,
-        "B",
-        leadership=6,
-        espionage=3,
-        faction="Marinha",
-    ),
-    character(
-        "Garp",
-        ("Líder", "Defensor"),
-        9,
-        10,
-        "S",
-        leadership=10,
-        guard=10,
-        faction="Marinha",
-    ),
-    character(
-        "Smoker",
-        ("Líder",),
-        9,
-        9,
-        "S",
-        leadership=9,
-        special="Logia",
-        draftable=False,
-        faction="Marinha",
-    ),
-    character(
-        "Buggy",
-        ("Líder", "Tático"),
-        6,
-        5,
-        "B",
-        leadership=7,
-        tactics=7,
-        faction="Piratas do Buggy",
-    ),
-    character(
-        "Kabaji",
-        ("Vice-líder", "Atacante"),
-        6,
-        5,
-        "B",
-        vice=6,
-        assault=6,
-        faction="Piratas do Buggy",
-    ),
-    character(
-        "Mohji",
-        ("Defensor",),
-        5,
-        6,
-        "C",
-        guard=6,
-        faction="Piratas do Buggy",
-    ),
-    character(
-        "Richie",
-        ("Atacante", "Defensor"),
-        7,
-        6,
-        "B",
-        assault=7,
-        guard=7,
-        faction="Piratas do Buggy",
-    ),
-    character(
-        "Alvida",
-        ("Líder", "Defensor"),
-        6,
-        7,
-        "B",
-        leadership=6,
-        guard=7,
-        faction="Piratas da Alvida",
-    ),
-    character(
-        "Zeff",
-        ("Tático", "Defensor"),
-        7,
-        8,
-        "A",
-        guard=8,
-        tactics=9,
-        faction="Baratie",
-    ),
-    character(
-        "Krieg",
-        ("Atacante", "Tático"),
-        8,
-        8,
-        "A",
-        assault=8,
-        tactics=7,
-        faction="Piratas do Krieg",
-    ),
-    character(
-        "Gin",
-        ("Vice-líder",),
-        8,
-        7,
-        "A",
-        vice=8,
-        faction="Piratas do Krieg",
-    ),
-    character(
-        "Mihawk",
-        ("Atacante",),
-        10,
-        9,
-        "S",
-        assault=10,
-        faction="Independente",
-    ),
-    character(
-        "Yosaku",
-        ("Defensor",),
-        4,
-        5,
-        "C",
-        guard=5,
-        faction="Caçadores de Recompensa",
-    ),
-    character(
-        "Johnny",
-        ("Defensor",),
-        4,
-        5,
-        "C",
-        guard=5,
-        faction="Caçadores de Recompensa",
-    ),
-    character(
-        "Arlong",
-        ("Líder", "Vice-líder"),
-        8,
-        8,
-        "A",
-        leadership=8,
-        vice=8,
-        faction="Piratas do Arlong",
-    ),
-    character(
-        "Hacchi",
-        ("Atacante",),
-        7,
-        7,
-        "B",
-        assault=7,
-        faction="Piratas do Arlong",
-    ),
-    character(
-        "Kuroobi",
-        ("Atacante", "Defensor"),
-        7,
-        8,
-        "B",
-        assault=7,
-        guard=8,
-        faction="Piratas do Arlong",
-    ),
-    character(
-        "Chew",
-        ("Atacante", "Tático"),
-        6,
-        5,
-        "B",
-        assault=6,
-        tactics=6,
-        faction="Piratas do Arlong",
-    ),
+_WORKBOOK = _read_workbook(DATA_FILE)
+PLAYABLE_CHARACTERS = [
+    _character_from_row(row, enemy=False)
+    for row in _WORKBOOK["Personagens jogáveis"][1:]
+]
+ENEMY_CHARACTERS = [
+    _character_from_row(row, enemy=True)
+    for row in _WORKBOOK["Personagens Inimigos"][1:]
 ]
 
-CHARACTER_BY_NAME = {item["name"]: item for item in CHARACTERS}
+# Alias mantido para reduzir o impacto em estados e imports antigos.
+CHARACTERS = PLAYABLE_CHARACTERS
+PLAYABLE_BY_NAME = {item["name"]: item for item in PLAYABLE_CHARACTERS}
+ENEMY_BY_NAME = {item["name"]: item for item in ENEMY_CHARACTERS}
+CHARACTER_BY_NAME = {**ENEMY_BY_NAME, **PLAYABLE_BY_NAME}
 
-RANK_ORDER = {"S": 5, "A": 4, "B": 3, "C": 2, "D": 1}
-
-# Chefes centrais da campanha nunca podem integrar a equipe do jogador,
-# seja no sorteio inicial ou pelo recrutamento após uma vitória.
-MAIN_VILLAINS = {"Morgan", "Buggy", "Krieg", "Arlong", "Smoker"}
+PLAYABLE_DRAW_GROUPS = sorted(
+    {
+        group
+        for character in PLAYABLE_CHARACTERS
+        for group in character["draw_groups"]
+    }
+)
+ENEMY_GROUPS = sorted(
+    {
+        group
+        for character in ENEMY_CHARACTERS
+        for group in character["draw_groups"]
+    }
+)
 
 
 LOCATIONS = [
@@ -352,8 +212,8 @@ LOCATIONS = [
         "y": 76,
     },
     {
-        "name": "Shells Town",
-        "subtitle": "A tirania de Morgan",
+        "name": "Shell's Town",
+        "subtitle": "A força da Marinha",
         "x": 25,
         "y": 55,
     },
@@ -387,57 +247,32 @@ LOCATIONS = [
 STAGES = [
     {
         "location_index": 1,
-        "name": "Shells Town",
-        "boss": "Morgan",
-        "enemies": ["Morgan", "Helmeppo", "Koby"],
-        "difficulty": 0.75,
-        "description": "Derrube o Capitão Morgan e liberte a base da Marinha.",
+        "name": "Shell's Town",
+        "description": "Enfrente a primeira filiação que cruzar sua rota.",
         "reward": 500,
     },
     {
         "location_index": 2,
         "name": "Orange Town",
-        "boss": "Buggy",
-        "enemies": ["Buggy", "Kabaji", "Mohji", "Richie", "Alvida"],
-        "difficulty": 0.85,
-        "description": "Sobreviva ao espetáculo caótico dos Piratas do Buggy.",
+        "description": "Uma nova tripulação disputa o controle da rota.",
         "reward": 900,
     },
     {
         "location_index": 3,
         "name": "Baratie",
-        "boss": "Krieg",
-        "enemies": ["Krieg", "Gin", "Mihawk"],
-        "difficulty": 0.90,
-        "enemy_adjustments": {
-            "Mihawk": {"attack": 7, "defense": 7, "hp_multiplier": 0.70}
-        },
-        "description": (
-            "Defenda o restaurante de Krieg. Mihawk aparece como um encontro "
-            "limitado para manter a escala do East Blue."
-        ),
+        "description": "As filiações mais perigosas começam a se aproximar.",
         "reward": 1_400,
     },
     {
         "location_index": 4,
         "name": "Arlong Park",
-        "boss": "Arlong",
-        "enemies": ["Arlong", "Hacchi", "Kuroobi", "Chew"],
-        "difficulty": 1.00,
-        "description": "Rompa as defesas dos Homens-Peixe e derrote Arlong.",
+        "description": "A disputa pelo East Blue chega ao seu ponto crítico.",
         "reward": 2_000,
     },
     {
         "location_index": 5,
         "name": "Reverse Mountain",
-        "boss": "Smoker",
-        "enemies": ["Smoker"],
-        "random_enemy_team": True,
-        "difficulty": 1.05,
-        "description": (
-            "Smoker e sua habilidade Logia bloqueiam a entrada da Grand Line. "
-            "O restante da força inimiga é imprevisível."
-        ),
+        "description": "Supere uma filiação de alto nível antes da Grand Line.",
         "reward": 3_000,
     },
 ]

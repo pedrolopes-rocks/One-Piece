@@ -3,12 +3,25 @@
 Jogo de progressão por ilhas desenvolvido em Streamlit. A campanha inclui:
 
 - montagem progressiva da tripulação, escolhendo uma função por equipe sorteada;
-- até três resorteios da equipe candidata durante a composição;
-- rankings de S a D e atributos de ataque/defesa de 1 a 10;
+- sorteio por grupo, seguido da escolha de um personagem e de sua função;
+- até seis personagens são exibidos por grupo, usando somente grupos com ao
+  menos cinco personagens;
+- até dois resorteios, reduzindo pela metade a chance de grupos já exibidos;
+- ranks de SSS a F, mantendo os valores numéricos de atributos ocultos;
 - mapa do East Blue com avanço do barco;
-- resolução automática dos confrontos;
-- efeitos de líder, vice-líder, atacante, defensor, espião e tático;
-- recrutamento após vitórias e banco de reservas.
+- confrontos animados contra até seis inimigos da mesma filiação;
+- três velocidades de animação selecionáveis durante o confronto;
+- efeitos de capitão, imediato, atacante, defensor, espião e tático;
+- filiações sorteadas com dificuldade crescente ao longo da rota;
+- filiações enfrentadas não se repetem na mesma campanha;
+- equipes inimigas incompletas recebem 25% de força por vaga ausente;
+- o poder ofensivo inimigo cresce 25% a cada ilha, com bônus adicionais para
+  tiers A, S, SS e SSS e para Capitães;
+- recrutamento escolhido pelo jogador, com substituição imediata de um
+  sobrevivente compatível.
+
+Os personagens e valores de balanceamento são carregados de
+`assets/rei_dos_mares.xlsx`.
 
 ## Executar
 
