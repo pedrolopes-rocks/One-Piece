@@ -1,0 +1,65 @@
+# Segredos e credenciais
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*credentials*.json
+*secrets*.json
+.streamlit/secrets.toml
+
+# Regras e probabilidades privadas
+game_balance.local.py
+game_rules.private.py
+config/private/
+config/*.local.*
+config/*.private.*
+
+# Arquivos locais de inicialização
+*.bat
+*.cmd
+*.ps1
+
+# Relatórios e documentos gerados
+*.pdf
+reports/
+relatorios/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Ambientes virtuais
+.venv/
+venv/
+env/
+
+# Arquivos temporários e logs
+tmp/
+temp/
+*.tmp
+*.temp
+*.log
+*.bak
+*.swp
+~$*
+
+# Configurações locais de ferramentas e editores
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Resultados locais de simulações
+simulations/
+simulacoes/
+*.simulation.csv
+*.simulation.json

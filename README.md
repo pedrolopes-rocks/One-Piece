@@ -1,14 +1,14 @@
-# Rota dos Mares — Demo East Blue
+# Rota dos Mares — East Blue
 
-Protótipo em Streamlit de um jogo de progressão por ilhas inspirado em uma
-aventura pirata. A demo inclui:
+Jogo de progressão por ilhas desenvolvido em Streamlit. A campanha inclui:
 
-- sorteio de uma tripulação com seis funções e personagens únicos;
+- montagem progressiva da tripulação, escolhendo uma função por equipe sorteada;
+- até três resorteios da equipe candidata durante a composição;
 - rankings de S a D e atributos de ataque/defesa de 1 a 10;
 - mapa do East Blue com avanço do barco;
-- combate automático por rodadas;
+- resolução automática dos confrontos;
 - efeitos de líder, vice-líder, atacante, defensor, espião e tático;
-- rolagem de recrutamento e banco de reservas.
+- recrutamento após vitórias e banco de reservas.
 
 ## Executar
 

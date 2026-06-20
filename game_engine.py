@@ -4,21 +4,38 @@ import copy
 import random
 from typing import Iterable
 
-from game_data import CHARACTER_BY_NAME, CHARACTERS, ROLES
+from game_data import CHARACTER_BY_NAME, CHARACTERS, MAIN_VILLAINS, ROLES
 
 
 IMPORTANT_ROLES = {"Líder", "Vice-líder", "Tático", "Espião"}
 
 
-def draft_crew(rng: random.Random | None = None) -> dict[str, dict]:
-    """Fill every role with a unique eligible character."""
+def triggers_imu_event(
+    rng: random.Random | None = None,
+    chance: float = 0.05,
+) -> bool:
+    """Return whether Imu erases the current island before the battle."""
     rng = rng or random.Random()
-    role_names = list(ROLES)
+    return rng.random() < chance
+
+
+def draft_candidate_team(
+    selected_crew: dict[str, dict] | None = None,
+    rng: random.Random | None = None,
+) -> dict[str, dict]:
+    """Fill every open role while preserving the characters already selected."""
+    rng = rng or random.Random()
+    selected_crew = selected_crew or {}
+    role_names = [role for role in ROLES if role not in selected_crew]
+    selected_names = {item["name"] for item in selected_crew.values()}
     candidates = {
         role: [
             item
             for item in CHARACTERS
-            if item.get("draftable", True) and role in item["roles"]
+            if item.get("draftable", True)
+            and item["name"] not in MAIN_VILLAINS
+            and item["name"] not in selected_names
+            and role in item["roles"]
         ]
         for role in role_names
     }
@@ -40,34 +57,14 @@ def draft_crew(rng: random.Random | None = None) -> dict[str, dict]:
         return False
 
     crew: dict[str, dict] = {}
-    if not assign(0, set(), crew):
-        raise RuntimeError("Não foi possível formar uma tripulação válida.")
+    if not assign(0, set(selected_names), crew):
+        raise RuntimeError("Não foi possível formar uma equipe candidata válida.")
     return {role: crew[role] for role in role_names}
 
 
-def reroll_role(
-    crew: dict[str, dict],
-    role: str,
-    rng: random.Random | None = None,
-) -> dict[str, dict]:
-    rng = rng or random.Random()
-    used = {
-        item["name"]
-        for current_role, item in crew.items()
-        if current_role != role
-    }
-    options = [
-        item
-        for item in CHARACTERS
-        if item.get("draftable", True)
-        and role in item["roles"]
-        and item["name"] not in used
-    ]
-    if not options:
-        return crew
-    updated = copy.deepcopy(crew)
-    updated[role] = copy.deepcopy(rng.choice(options))
-    return updated
+def draft_crew(rng: random.Random | None = None) -> dict[str, dict]:
+    """Fill every role with a unique eligible character."""
+    return draft_candidate_team({}, rng)
 
 
 def role_score(character: dict, assigned_role: str) -> int:
@@ -489,13 +486,14 @@ def recruitment_roll(
         enemy
         for enemy in battle["enemies"]
         if enemy["name"] not in existing_names
+        and enemy["name"] not in MAIN_VILLAINS
         and enemy["assigned_role"] not in occupied_reserve_roles
     ]
     if not candidates:
         return {
             "attempted": False,
             "success": False,
-            "message": "Não há inimigo compatível com uma função livre na reserva.",
+            "message": "Nenhum recrutamento ficou disponível após o confronto.",
         }
 
     candidate = rng.choice(candidates)
@@ -504,15 +502,9 @@ def recruitment_roll(
     roll = rng.random()
     success = roll <= chance
     if success:
-        message = (
-            f"🤝 {candidate['name']} entrou na reserva como {reserve_role} "
-            f"({roll:.0%} ≤ {chance:.0%})."
-        )
+        message = "Recrutamento bem-sucedido."
     else:
-        message = (
-            f"🎲 {candidate['name']} recusou o convite "
-            f"({roll:.0%} > {chance:.0%})."
-        )
+        message = "O recrutamento não teve sucesso."
     return {
         "attempted": True,
         "success": success,
@@ -536,4 +528,3 @@ def replace_with_reserve(
     removed_name = updated[role]["name"] if role in updated else None
     updated[role] = copy.deepcopy(reserve)
     return updated, removed_name
-

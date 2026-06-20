@@ -1,14 +1,16 @@
 import random
 import unittest
 
-from game_data import ROLES, STAGES
+from game_data import MAIN_VILLAINS, ROLES, STAGES
 from game_engine import (
     _damage,
+    draft_candidate_team,
     draft_crew,
     play_round,
     recruitment_roll,
     start_battle,
     team_summary,
+    triggers_imu_event,
 )
 
 
@@ -29,8 +31,52 @@ class CrewTests(unittest.TestCase):
         self.assertGreater(summary["defense"], 0)
         self.assertGreater(summary["power"], 0)
 
+    def test_draft_never_includes_main_villains(self):
+        for seed in range(50):
+            crew = draft_crew(random.Random(seed))
+            self.assertFalse(
+                {character["name"] for character in crew.values()}
+                & MAIN_VILLAINS
+            )
+
+    def test_candidate_team_only_fills_open_roles(self):
+        first_team = draft_candidate_team({}, random.Random(7))
+        selected = {"Líder": first_team["Líder"]}
+        next_team = draft_candidate_team(selected, random.Random(8))
+        self.assertNotIn("Líder", next_team)
+        self.assertEqual(set(next_team), set(ROLES) - {"Líder"})
+        selected_name = selected["Líder"]["name"]
+        self.assertNotIn(
+            selected_name,
+            {character["name"] for character in next_team.values()},
+        )
+
+    def test_progressive_choices_can_complete_a_valid_crew(self):
+        crew = {}
+        rng = random.Random(11)
+        while len(crew) < len(ROLES):
+            candidate_team = draft_candidate_team(crew, rng)
+            role = next(iter(candidate_team))
+            crew[role] = candidate_team[role]
+        self.assertEqual(set(crew), set(ROLES))
+        self.assertEqual(
+            len({character["name"] for character in crew.values()}),
+            len(ROLES),
+        )
+
 
 class BattleTests(unittest.TestCase):
+    def test_imu_event_uses_configured_chance(self):
+        class FixedRoll:
+            def __init__(self, value):
+                self.value = value
+
+            def random(self):
+                return self.value
+
+        self.assertTrue(triggers_imu_event(FixedRoll(0.049)))
+        self.assertFalse(triggers_imu_event(FixedRoll(0.05)))
+
     def test_strong_encounter_chance_grows_by_island(self):
         crew = draft_crew(random.Random(2))
         expected = [0.05, 0.10, 0.15, 0.20, 0.25]
@@ -142,6 +188,27 @@ class BattleTests(unittest.TestCase):
             if result["attempted"]:
                 self.assertEqual(result["chance"], 0.50)
                 self.assertNotEqual(result["reserve_role"], "Atacante")
+
+    def test_main_villain_cannot_be_recruited(self):
+        battle = {
+            "enemies": [
+                {"name": "Buggy", "assigned_role": "Líder"},
+            ]
+        }
+        result = recruitment_roll(battle, set(), set(), random.Random(1))
+        self.assertFalse(result["attempted"])
+        self.assertFalse(result["success"])
+
+    def test_recruitment_message_does_not_expose_roll_values(self):
+        battle = {
+            "enemies": [
+                {"name": "Kabaji", "assigned_role": "Vice-líder"},
+            ]
+        }
+        result = recruitment_roll(battle, set(), set(), random.Random(1))
+        self.assertNotIn("%", result["message"])
+        self.assertNotIn("≤", result["message"])
+        self.assertNotIn(">", result["message"])
 
 
 if __name__ == "__main__":

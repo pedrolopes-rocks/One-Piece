@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import base64
 import html
 import random
 import time
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -16,13 +18,13 @@ from game_data import (
     STAGES,
 )
 from game_engine import (
-    draft_crew,
+    draft_candidate_team,
     play_round,
     recruitment_roll,
     replace_with_reserve,
-    reroll_role,
     start_battle,
     team_summary,
+    triggers_imu_event,
 )
 
 
@@ -249,11 +251,54 @@ h2, h3 { color: #ffe4a3 !important; }
 
 .ship {
     position: absolute;
-    transform: translate(-50%, -65%);
-    font-size: 2.65rem;
+    transform: translate(-50%, -50%);
+    width: 54px;
+    height: 55px;
     z-index: 4;
     filter: drop-shadow(0 5px 3px rgba(0,0,0,.35));
     animation: bob 2s ease-in-out infinite;
+}
+.pirate-mast {
+    position: absolute;
+    left: 27px;
+    top: 3px;
+    width: 3px;
+    height: 34px;
+    border-radius: 2px;
+    background: #3e281b;
+}
+.pirate-sail {
+    position: absolute;
+    left: 29px;
+    top: 5px;
+    width: 27px;
+    height: 24px;
+    display: grid;
+    place-items: center;
+    clip-path: polygon(0 0, 100% 16%, 82% 100%, 0 88%);
+    background: linear-gradient(145deg, #151515, #020202);
+    border-left: 1px solid #8f7657;
+    color: #f3ead4;
+    font-size: 15px;
+    line-height: 1;
+}
+.pirate-hull {
+    position: absolute;
+    left: 5px;
+    bottom: 7px;
+    width: 45px;
+    height: 15px;
+    clip-path: polygon(0 0, 100% 0, 82% 100%, 18% 100%);
+    background: linear-gradient(#75472a, #2f1b13);
+    border-top: 2px solid #c08a4b;
+}
+.ship::after {
+    content: "⚓";
+    position: absolute;
+    left: 50%;
+    top: 78%;
+    transform: translateX(-50%);
+    font-size: .9rem;
 }
 
 @keyframes pulse {
@@ -322,9 +367,14 @@ def initialize_state() -> None:
         "berries": 0,
         "wins": 0,
         "last_recruitment": None,
+        "last_battle_result": None,
+        "campaign_defeated": False,
         "game_seed": random.randint(1, 999_999),
-        "action_mode": False,
-        "action_speed": "Normal",
+        "draft_team": {},
+        "crew_rerolls": 0,
+        "imu_event_active": False,
+        "campaign_destroyed": False,
+        "destroyed_location_index": None,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -337,6 +387,8 @@ def initialize_state() -> None:
                     migrated[role] = name
                     break
         st.session_state.reserves = migrated
+    if "crew_options" in st.session_state:
+        del st.session_state.crew_options
 
 
 def reset_campaign() -> None:
@@ -347,9 +399,14 @@ def reset_campaign() -> None:
     st.session_state.berries = 0
     st.session_state.wins = 0
     st.session_state.last_recruitment = None
+    st.session_state.last_battle_result = None
+    st.session_state.campaign_defeated = False
     st.session_state.game_seed = random.randint(1, 999_999)
-    st.session_state.action_mode = False
-    st.session_state.action_speed = "Normal"
+    st.session_state.draft_team = {}
+    st.session_state.crew_rerolls = 0
+    st.session_state.imu_event_active = False
+    st.session_state.campaign_destroyed = False
+    st.session_state.destroyed_location_index = None
 
 
 def crew_names() -> set[str]:
@@ -380,7 +437,7 @@ def crew_card(role: str, character: dict) -> str:
 
 def render_crew_grid() -> None:
     if not st.session_state.crew:
-        st.info("A tripulação ainda não foi sorteada.")
+        st.info("A tripulação ainda não foi formada.")
         return
     cards = "".join(
         crew_card(role, st.session_state.crew[role])
@@ -391,10 +448,25 @@ def render_crew_grid() -> None:
 
 
 def render_map() -> None:
-    current = st.session_state.stage_index
+    if (
+        st.session_state.campaign_destroyed
+        and st.session_state.destroyed_location_index is not None
+    ):
+        current = st.session_state.destroyed_location_index
+    elif len(st.session_state.crew) < len(ROLES):
+        current = 0
+    elif st.session_state.stage_index < len(STAGES):
+        current = STAGES[st.session_state.stage_index]["location_index"]
+    else:
+        current = len(LOCATIONS) - 1
     points = " ".join(f"{item['x']},{item['y']}" for item in LOCATIONS)
     node_html = []
+    destroyed_location = (
+        current if st.session_state.campaign_destroyed else None
+    )
     for index, location in enumerate(LOCATIONS):
+        if index == destroyed_location:
+            continue
         if index < current:
             status = "done"
         elif index == current:
@@ -410,7 +482,16 @@ def render_map() -> None:
             </div>
             """
         )
-    ship_location = LOCATIONS[min(current, len(LOCATIONS) - 1)]
+    ship_location = LOCATIONS[current]
+    ship_html = ""
+    if not st.session_state.campaign_destroyed:
+        ship_html = (
+            f'<div class="ship" style="left:{ship_location["x"]}%;'
+            f'top:{ship_location["y"]}%;">'
+            '<span class="pirate-mast"></span>'
+            '<span class="pirate-sail">☠</span>'
+            '<span class="pirate-hull"></span></div>'
+        )
     st.html(
         f"""
         <div class="sea-map">
@@ -418,27 +499,121 @@ def render_map() -> None:
                 <polyline class="route-path" points="{points}" />
             </svg>
             {''.join(node_html)}
-            <div class="ship" style="left:{ship_location['x']}%;top:{ship_location['y']}%;">⛵</div>
+            {ship_html}
         </div>
         """
     )
 
 
-def fighter_rows(fighters: list[dict]) -> str:
-    rows = []
-    for fighter in fighters:
-        percent = 0 if fighter["max_hp"] == 0 else fighter["hp"] / fighter["max_hp"] * 100
-        state = "KO" if not fighter["alive"] else f"{fighter['hp']}"
-        rows.append(
-            f"""
-            <div class="fighter-row">
-                <span>{html.escape(fighter['name'])}</span>
-                <div class="hp-track"><div class="hp-fill" style="width:{percent:.1f}%"></div></div>
-                <span>{state}</span>
-            </div>
-            """
+def render_imu_event() -> None:
+    video_path = Path(__file__).parent / "assets" / "imu_eye_cinematic.mp4"
+    video_data = base64.b64encode(video_path.read_bytes()).decode("ascii")
+    words = "Para início de conversa este lugar nunca existiu".split()
+    word_html = "".join(
+        (
+            f'<span style="--word-delay:{2.4 + index * 0.43:.2f}s">'
+            f"{html.escape(word)}</span>"
         )
-    return "".join(rows)
+        for index, word in enumerate(words)
+    )
+    st.html(
+        f"""
+        <style>
+        .imu-event {{
+            position: fixed;
+            inset: 0;
+            z-index: 999999;
+            display: grid;
+            place-items: center;
+            overflow: hidden;
+            background: #000;
+            animation: imu-end 10.5s ease-in forwards;
+        }}
+        .imu-presence {{
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            opacity: 0;
+            filter: contrast(1.12) brightness(.82);
+            animation: imu-arrive 3.4s cubic-bezier(.2,.7,.2,1) .35s forwards;
+        }}
+        .imu-words {{
+            position: relative;
+            z-index: 2;
+            max-width: min(900px, 88vw);
+            padding-top: min(58vh, 520px);
+            text-align: center;
+            color: white;
+            font: 500 clamp(1.15rem, 2.4vw, 2rem)/1.65 Georgia, serif;
+            letter-spacing: .04em;
+            text-shadow: 0 0 12px #000, 0 0 28px #000;
+        }}
+        .imu-words span {{
+            display: inline-block;
+            margin-right: .32em;
+            opacity: 0;
+            transform: translateY(5px);
+            animation: imu-word .8s ease-out var(--word-delay) forwards;
+        }}
+        .erased-place {{
+            position: absolute;
+            left: 50%;
+            bottom: 3vh;
+            z-index: 3;
+            display: flex;
+            align-items: end;
+            gap: .2rem;
+            transform: translateX(-50%);
+            font-size: clamp(2.2rem, 5vw, 4.5rem);
+            filter: grayscale(.2) drop-shadow(0 0 12px rgba(255,255,255,.2));
+            animation: erase-place 2.2s ease-in 7.7s forwards;
+        }}
+        .erased-place .tiny-flag {{
+            font-size: .5em;
+            margin-right: -.55em;
+            margin-bottom: .75em;
+            z-index: 2;
+        }}
+        @keyframes imu-arrive {{
+            from {{ opacity: 0; transform: scale(1.07); filter: brightness(.3); }}
+            to {{ opacity: .98; transform: scale(1); filter: brightness(.82); }}
+        }}
+        @keyframes imu-word {{
+            to {{ opacity: 1; transform: translateY(0); }}
+        }}
+        @keyframes erase-place {{
+            0% {{ opacity: 1; filter: brightness(1); }}
+            35% {{ opacity: .9; filter: brightness(4) blur(1px); }}
+            100% {{ opacity: 0; transform: translateX(-50%) scale(.15);
+                    filter: brightness(8) blur(18px); }}
+        }}
+        @keyframes imu-end {{
+            0%, 93% {{ opacity: 1; }}
+            100% {{ opacity: 0; }}
+        }}
+        </style>
+        <div class="imu-event">
+            <video class="imu-presence" autoplay muted playsinline preload="auto"
+                   aria-label="O olhar de Imu">
+                <source src="data:video/mp4;base64,{video_data}"
+                        type="video/mp4">
+            </video>
+            <div class="imu-words">{word_html}</div>
+            <div class="erased-place">
+                <span class="tiny-flag">🏴‍☠️</span><span>⛵</span><span>🏝️</span>
+            </div>
+        </div>
+        """
+    )
+    time.sleep(10.6)
+    st.session_state.imu_event_active = False
+    st.session_state.campaign_destroyed = True
+    st.session_state.battle = None
+    st.session_state.crew = {}
+    st.session_state.draft_team = {}
+    st.rerun()
 
 
 def finish_victory() -> None:
@@ -459,75 +634,55 @@ def finish_victory() -> None:
     st.session_state.battle = None
 
 
-def render_battle() -> None:
-    battle = st.session_state.battle
-    if battle is None:
-        return
+def resolve_battle(stage: dict) -> None:
+    battle = start_battle(st.session_state.crew, stage)
+    st.session_state.battle = battle
+    progress = st.progress(0, text="Confronto em andamento")
 
-    left, right = st.columns(2)
-    with left:
-        st.markdown("#### Sua tripulação")
-        st.html(f'<div class="battle-panel">{fighter_rows(battle["player"])}</div>')
-    with right:
-        st.markdown(f"#### Inimigos — {battle['stage']['name']}")
-        st.html(f'<div class="battle-panel">{fighter_rows(battle["enemies"])}</div>')
+    for round_index in range(30):
+        play_round(battle)
+        progress.progress(
+            min(95, 12 + (round_index + 1) * 8),
+            text="Confronto em andamento",
+        )
+        time.sleep(0.16)
+        if battle["status"] != "active":
+            break
 
-    controls, history = st.columns([0.35, 0.65])
-    with history:
-        st.markdown("#### Diário da batalha")
-        history_box = st.empty()
-        history_box.code("\n".join(battle["log"][-16:]), language=None)
-    with controls:
-        st.metric("Rodada", battle["round"])
-        if battle["status"] == "active":
-            st.toggle("🎬 Modo ação", key="action_mode")
-            if st.session_state.action_mode:
-                st.select_slider(
-                    "Velocidade",
-                    options=["Lenta", "Normal", "Rápida"],
-                    key="action_speed",
-                )
-            if st.button("⚔️ Resolver próxima rodada", type="primary", width="stretch"):
-                previous_log_size = len(battle["log"])
-                st.session_state.battle = play_round(battle)
-                if st.session_state.action_mode:
-                    delays = {"Lenta": 1.15, "Normal": 0.55, "Rápida": 0.18}
-                    delay = delays[st.session_state.action_speed]
-                    new_entries = battle["log"][previous_log_size:]
-                    visible_log = battle["log"][:previous_log_size]
-                    for entry in new_entries:
-                        visible_log.append(entry)
-                        history_box.code(
-                            "\n".join(visible_log[-16:]),
-                            language=None,
-                        )
-                        time.sleep(delay)
-                st.rerun()
-        elif battle["status"] == "victory":
-            st.success("Vitória confirmada.")
-            if st.button("⛵ Avançar no mapa", type="primary", width="stretch"):
-                finish_victory()
-                st.rerun()
-        else:
-            st.error(
-                "Toda a tripulação foi nocauteada. A campanha terminou."
-            )
-            if st.button("🔁 Reiniciar campanha", width="stretch"):
-                reset_campaign()
-                st.rerun()
+    if battle["status"] == "victory":
+        rounds = battle["round"]
+        stage_name = battle["stage"]["name"]
+        finish_victory()
+        st.session_state.last_battle_result = {
+            "status": "victory",
+            "message": f"Vitória em {stage_name} após {rounds} rodadas.",
+        }
+        progress.progress(100, text="Vitória")
+    else:
+        st.session_state.last_battle_result = {
+            "status": "defeat",
+            "message": f"A tripulação foi derrotada em {stage['name']}.",
+        }
+        st.session_state.campaign_defeated = True
+        st.session_state.battle = None
+        progress.progress(100, text="Derrota")
+
+    time.sleep(0.45)
 
 
 initialize_state()
 
+if st.session_state.imu_event_active:
+    render_imu_event()
+
 st.html(
     """
     <div class="hero">
-        <div class="hero-kicker">Protótipo jogável • Saga East Blue</div>
+        <div class="hero-kicker">Saga East Blue</div>
         <div class="hero-title">Rota dos Mares</div>
         <div class="hero-copy">
-            Sorteie uma tripulação com seis funções, atravesse cinco conflitos do
-            East Blue e alcance a Reverse Mountain. As forças desta demo usam a
-            escala inicial de 1 a 10; sagas futuras poderão ultrapassar esse teto.
+            Forme sua tripulação, vença os conflitos do East Blue e abra caminho
+            até a Reverse Mountain.
         </div>
     </div>
     """
@@ -549,18 +704,34 @@ with journey_tab:
 
     if st.session_state.stage_index >= len(STAGES):
         st.success(
-            "Demo concluída: sua tripulação alcançou a Reverse Mountain e está pronta para a Grand Line."
+            "A tripulação alcançou a Reverse Mountain. A Grand Line está à frente."
         )
-        st.balloons()
-    elif not st.session_state.crew:
+    elif st.session_state.campaign_destroyed:
+        st.error(
+            "Esse lugar nunca existiu. A ilha e sua tripulação foram apagadas."
+        )
+        if st.button("🔁 Reiniciar campanha", type="primary"):
+            reset_campaign()
+            st.rerun()
+    elif st.session_state.campaign_defeated:
+        result = st.session_state.last_battle_result
+        st.error(
+            result["message"]
+            if result
+            else "A tripulação foi derrotada."
+        )
+        if st.button("🔁 Iniciar nova campanha", type="primary"):
+            reset_campaign()
+            st.rerun()
+    elif len(st.session_state.crew) < len(ROLES):
         st.warning(
-            "Não há sobreviventes disponíveis. Reinicie a campanha para formar outra tripulação."
+            "A tripulação precisa ocupar as seis funções antes de partir."
         )
-    elif st.session_state.battle is None:
+    else:
         stage = STAGES[st.session_state.stage_index]
         col_info, col_action = st.columns([0.72, 0.28])
         with col_info:
-            st.subheader(f"Próximo desafio: {stage['name']}")
+            st.subheader(stage["name"])
             st.write(stage["description"])
             st.caption(
                 f"Chefe: {stage['boss']} • Recompensa: "
@@ -569,28 +740,56 @@ with journey_tab:
         with col_action:
             st.write("")
             if st.button("⚔️ Iniciar batalha", type="primary", width="stretch"):
-                st.session_state.battle = start_battle(st.session_state.crew, stage)
+                st.session_state.last_battle_result = None
+                st.session_state.last_recruitment = None
+                if triggers_imu_event():
+                    st.session_state.imu_event_active = True
+                    st.session_state.destroyed_location_index = stage[
+                        "location_index"
+                    ]
+                else:
+                    resolve_battle(stage)
                 st.rerun()
+        if st.session_state.last_battle_result:
+            result = st.session_state.last_battle_result
+            if result["status"] == "victory":
+                st.success(result["message"])
         if st.session_state.last_recruitment:
             result = st.session_state.last_recruitment
             if result.get("success"):
                 st.success(result["message"])
             else:
                 st.info(result["message"])
-    else:
-        render_battle()
 
 with crew_tab:
     action1, action2, action3 = st.columns([0.34, 0.33, 0.33])
     with action1:
+        has_candidate = bool(st.session_state.draft_team)
+        crew_complete = len(st.session_state.crew) == len(ROLES)
+        rerolls_left = 3 - st.session_state.crew_rerolls
+        draft_label = (
+            f"🎲 Resortear equipe ({rerolls_left} restantes)"
+            if has_candidate
+            else "🎲 Sortear equipe candidata"
+        )
         if st.button(
-            "🎲 Sortear tripulação completa",
+            draft_label,
             type="primary",
             width="stretch",
-            disabled=st.session_state.stage_index > 0,
-            help="Disponível apenas antes da primeira batalha.",
+            disabled=(
+                st.session_state.stage_index > 0
+                or crew_complete
+                or (has_candidate and rerolls_left <= 0)
+            ),
+            help=(
+                "Apresenta um candidato para cada função disponível."
+            ),
         ):
-            st.session_state.crew = draft_crew()
+            if has_candidate:
+                st.session_state.crew_rerolls += 1
+            st.session_state.draft_team = draft_candidate_team(
+                st.session_state.crew
+            )
             st.session_state.battle = None
             st.session_state.last_recruitment = None
             st.rerun()
@@ -598,46 +797,64 @@ with crew_tab:
         if st.button(
             "🔁 Reiniciar campanha",
             width="stretch",
-            help="Apaga tripulação, progresso, berries e reservas desta sessão.",
+            help="Recomeça a jornada desde a formação da tripulação.",
         ):
             reset_campaign()
             st.rerun()
     with action3:
-        if st.session_state.crew:
-            summary = team_summary(st.session_state.crew)
-            st.metric("Poder estimado", f"{summary['power']:.1f}")
+        st.metric(
+            "Composição da equipe",
+            f"{len(st.session_state.crew)}/{len(ROLES)}",
+        )
+
+    if st.session_state.draft_team and not crew_complete:
+        st.subheader("Defina a próxima função")
+        st.caption(
+            "Escolha um integrante. Os demais cargos serão renovados na próxima seleção."
+        )
+        open_roles = list(st.session_state.draft_team)
+        option_columns = st.columns(min(3, len(open_roles)))
+        for option_index, role in enumerate(open_roles):
+            character = st.session_state.draft_team[role]
+            column = option_columns[option_index % len(option_columns)]
+            with column:
+                st.markdown(f"#### {ROLES[role]['icon']} {role}")
+                st.write(f"**{character['name']}** · R{character['rank']}")
+                st.caption(
+                    f"ATQ {character['attack']} · DEF {character['defense']} · "
+                    f"Função {character['skills'][role]} · {character['faction']}"
+                )
+                if st.button(
+                    f"Escolher {character['name']} como {role}",
+                    key=f"choose_role_{role}",
+                    type="primary",
+                    width="stretch",
+                ):
+                    st.session_state.crew[role] = character
+                    if len(st.session_state.crew) < len(ROLES):
+                        st.session_state.draft_team = draft_candidate_team(
+                            st.session_state.crew
+                        )
+                    else:
+                        st.session_state.draft_team = {}
+                    st.session_state.battle = None
+                    st.session_state.last_recruitment = None
+                    st.rerun()
+        st.caption(f"Novas formações: {st.session_state.crew_rerolls}/3")
 
     render_crew_grid()
 
     if st.session_state.crew:
-        st.subheader("Rerrolagem por função")
-        cols = st.columns(3)
-        for index, role in enumerate(ROLES):
-            if role not in st.session_state.crew:
-                continue
-            character_name = st.session_state.crew[role]["name"]
-            with cols[index % 3]:
-                if st.button(
-                    f"{ROLES[role]['icon']} {role}: {character_name}",
-                    key=f"reroll_{role}",
-                    width="stretch",
-                    disabled=st.session_state.stage_index > 0,
-                    help=f"Sortear novamente apenas a função {role}.",
-                ):
-                    st.session_state.crew = reroll_role(st.session_state.crew, role)
-                    st.session_state.battle = None
-                    st.rerun()
-
         summary = team_summary(st.session_state.crew)
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Ataque base", int(summary["attack"]))
         m2.metric("Defesa base", int(summary["defense"]))
-        m3.metric("Chance de recrutamento", "50%")
-        m4.metric("Crítico dado pelo tático", f"+{summary['tactical_modifier']:.1%}")
+        m3.metric("Reservas", len(st.session_state.reserves))
+        m4.metric("Bônus tático", f"+{summary['tactical_modifier']:.1%}")
 
-    st.subheader("Reserva recrutada")
+    st.subheader("Reservas")
     if not st.session_state.reserves:
-        st.caption("Inimigos recrutados após vitórias aparecerão aqui.")
+        st.caption("Nenhum personagem disponível na reserva.")
     else:
         reserve_role = st.selectbox(
             "Vaga da reserva",
@@ -648,10 +865,9 @@ with crew_tab:
         )
         reserve_name = st.session_state.reserves[reserve_role]
         st.caption(
-            f"{reserve_name} foi recrutado especificamente para a função "
-            f"{reserve_role}."
+            f"{reserve_name} está disponível para a função {reserve_role}."
         )
-        if st.button("Escalar personagem da reserva"):
+        if st.button("Incluir na tripulação"):
             old_crew = st.session_state.crew
             updated, removed = replace_with_reserve(
                 old_crew,
@@ -705,8 +921,7 @@ with ranking_tab:
         },
     )
     st.caption(
-        "S = excepcional no East Blue; A = elite; B = forte/especialista; "
-        "C = apoio limitado; D = iniciante."
+        "S: excepcional • A: elite • B: especialista • C: apoio • D: iniciante"
     )
 
     selected_name = st.selectbox(
@@ -736,6 +951,5 @@ with rules_tab:
         )
     st.html(f'<div class="crew-grid">{"".join(cards)}</div>')
     st.info(
-        "A classificação funcional é independente de ataque e defesa. "
-        "Nami, por exemplo, tem combate direto baixo, mas nota tática máxima no East Blue."
+        "A aptidão para uma função é avaliada separadamente dos atributos de ataque e defesa."
     )

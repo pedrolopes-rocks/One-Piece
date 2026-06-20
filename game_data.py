@@ -8,8 +8,8 @@ ROLES = OrderedDict(
         "Líder": {
             "icon": "☠️",
             "description": (
-                "Comanda a equipe e pode recrutar um inimigo derrotado "
-                "por meio de uma rolagem."
+                "Comanda a equipe e pode trazer um adversário derrotado "
+                "para a reserva."
             ),
         },
         "Vice-líder": {
@@ -22,8 +22,8 @@ ROLES = OrderedDict(
         "Atacante": {
             "icon": "⚔️",
             "description": (
-                "Recebe chance crítica própria e pode causar o dobro do dano, "
-                "mas também fica mais exposto aos ataques inimigos."
+                "Concentra o poder ofensivo da equipe e pode causar golpes "
+                "críticos, mas atrai mais ataques inimigos."
             ),
         },
         "Defensor": {
@@ -43,8 +43,8 @@ ROLES = OrderedDict(
         "Tático": {
             "icon": "🧭",
             "description": (
-                "Aumenta a chance de acerto crítico dos personagens escalados "
-                "como atacantes."
+                "Amplia a eficiência ofensiva dos integrantes designados "
+                "para o ataque."
             ),
         },
     }
@@ -338,6 +338,10 @@ CHARACTERS = [
 CHARACTER_BY_NAME = {item["name"]: item for item in CHARACTERS}
 
 RANK_ORDER = {"S": 5, "A": 4, "B": 3, "C": 2, "D": 1}
+
+# Chefes centrais da campanha nunca podem integrar a equipe do jogador,
+# seja no sorteio inicial ou pelo recrutamento após uma vitória.
+MAIN_VILLAINS = {"Morgan", "Buggy", "Krieg", "Arlong", "Smoker"}
 
 
 LOCATIONS = [
