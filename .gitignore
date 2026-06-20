@@ -24,6 +24,7 @@ config/*.private.*
 
 # Relatórios e documentos gerados
 *.pdf
+gerar_status_personagens_pdf.py
 reports/
 relatorios/
 
