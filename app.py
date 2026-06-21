@@ -7,14 +7,11 @@ import random
 import time
 from pathlib import Path
 
-import pandas as pd
 import streamlit as st
 
 from game_data import (
     CHARACTER_BY_NAME,
-    CHARACTERS,
     LOCATIONS,
-    RANK_ORDER,
     ROLES,
     STAGES,
 )
@@ -417,8 +414,9 @@ def initialize_state() -> None:
         "battle_frames": [],
         "battle_frame_index": 0,
         "battle_animation_active": False,
-        "battle_speed": "Normal",
+        "preferred_battle_speed": "Normal",
         "battle_last_frame_at": 0.0,
+        "current_view": "crew",
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -446,6 +444,11 @@ def initialize_state() -> None:
         st.session_state.draft_team = {}
     if "crew_options" in st.session_state:
         del st.session_state.crew_options
+    if "battle_speed" in st.session_state:
+        st.session_state.preferred_battle_speed = st.session_state.battle_speed
+        del st.session_state.battle_speed
+    if st.session_state.current_view not in {"crew", "journey"}:
+        st.session_state.current_view = "crew"
 
 
 def reset_campaign() -> None:
@@ -469,8 +472,8 @@ def reset_campaign() -> None:
     st.session_state.battle_frames = []
     st.session_state.battle_frame_index = 0
     st.session_state.battle_animation_active = False
-    st.session_state.battle_speed = "Normal"
     st.session_state.battle_last_frame_at = 0.0
+    st.session_state.current_view = "crew"
 
 
 def crew_names() -> set[str]:
@@ -502,20 +505,20 @@ def draw_crew_group(*, apply_reroll_penalty: bool = False) -> dict:
 
 def crew_card(role: str, character: dict) -> str:
     icon = ROLES[role]["icon"]
-    initials = "".join(part[0] for part in character["name"].split())[:2]
-    role_rank = character["role_ranks"][role]
+    role_chips = "".join(
+        (
+            f'<span class="stat-chip">{ROLES[character_role]["icon"]} '
+            f'{html.escape(character_role)} '
+            f'{html.escape(character["role_ranks"][character_role])}</span>'
+        )
+        for character_role in character["roles"]
+    )
     return f"""
     <div class="crew-card">
-        <div class="avatar">{html.escape(initials)}</div>
+        <div class="avatar">{html.escape(character["rank"])}</div>
         <div class="role-label">{icon} {html.escape(role)}</div>
         <div class="crew-name">{html.escape(character["name"])}</div>
-        <span class="rank">OVER {html.escape(character["rank"])}</span>
-        <div class="stat-line">
-            <span class="stat-chip">⚔ ATQ {character["attack_rank"]}</span>
-            <span class="stat-chip">🛡 DEF {character["defense_rank"]}</span>
-            <span class="stat-chip">♥ HP {character["hp_rank"]}</span>
-            <span class="stat-chip">◆ FUNÇÃO {role_rank}</span>
-        </div>
+        <div class="stat-line">{role_chips}</div>
         <div class="stat-line">
             <span class="stat-chip">{html.escape(character["faction"])}</span>
         </div>
@@ -541,7 +544,8 @@ def battle_board_html(battle: dict) -> str:
             (
                 f'<div class="fighter-name '
                 f'{"alive" if fighter["alive"] else "defeated"}">'
-                f'{html.escape(fighter["name"])}</div>'
+                f'{html.escape(fighter["name"])} '
+                f'({html.escape(fighter["assigned_role"][0])})</div>'
             )
             for fighter in fighters
         )
@@ -800,6 +804,12 @@ def begin_battle(stage: dict) -> None:
     st.session_state.battle_last_frame_at = time.time()
 
 
+def update_battle_speed() -> None:
+    st.session_state.preferred_battle_speed = (
+        st.session_state.battle_speed_control
+    )
+
+
 @st.fragment(run_every=0.2)
 def render_battle_animation() -> None:
     frames = st.session_state.battle_frames
@@ -808,11 +818,14 @@ def render_battle_animation() -> None:
         return
 
     render_battle_board(frames[index])
+    speed_options = ["Lenta", "Normal", "Rápida"]
     st.radio(
         "Velocidade do combate",
-        ["Lenta", "Normal", "Rápida"],
+        speed_options,
+        index=speed_options.index(st.session_state.preferred_battle_speed),
         horizontal=True,
-        key="battle_speed",
+        key="battle_speed_control",
+        on_change=update_battle_speed,
     )
     if index >= len(frames) - 1:
         st.session_state.battle_animation_active = False
@@ -823,7 +836,7 @@ def render_battle_animation() -> None:
     delays = {"Lenta": 1.8, "Normal": 1.0, "Rápida": 0.45}
     now = time.time()
     if now - st.session_state.battle_last_frame_at < delays[
-        st.session_state.battle_speed
+        st.session_state.preferred_battle_speed
     ]:
         return
 
@@ -863,9 +876,25 @@ def render_recruitment() -> None:
         return
 
     if not st.session_state.recruitment_attempted:
+        candidate_by_name = {
+            fighter["name"]: fighter for fighter in candidates
+        }
+
+        def format_candidate(name: str) -> str:
+            fighter = candidate_by_name[name]
+            roles = " / ".join(
+                (
+                    f"{role} "
+                    f"({fighter['role_ranks'][role]})"
+                )
+                for role in fighter["roles"]
+            )
+            return f"{name} — OVER {fighter['rank']} — {roles}"
+
         selected_name = st.selectbox(
             "Escolha um adversário para tentar recrutar",
             [fighter["name"] for fighter in candidates],
+            format_func=format_candidate,
         )
         col_attempt, col_skip = st.columns(2)
         with col_attempt:
@@ -918,15 +947,25 @@ def render_recruitment() -> None:
             f"{st.session_state.crew[role]['name']} · {role}"
         ),
     )
-    if st.button("Confirmar substituição", type="primary"):
-        st.session_state.crew = replace_survivor_with_recruit(
-            st.session_state.crew,
-            battle,
-            recruit_name,
-            selected_role,
-        )
-        complete_stage()
-        st.rerun()
+    col_confirm, col_cancel = st.columns(2)
+    with col_confirm:
+        if st.button(
+            "Confirmar substituição",
+            type="primary",
+            width="stretch",
+        ):
+            st.session_state.crew = replace_survivor_with_recruit(
+                st.session_state.crew,
+                battle,
+                recruit_name,
+                selected_role,
+            )
+            complete_stage()
+            st.rerun()
+    with col_cancel:
+        if st.button("Desistir do recrutamento", width="stretch"):
+            complete_stage()
+            st.rerun()
 
 
 initialize_state()
@@ -947,17 +986,25 @@ st.html(
     """
 )
 
-top1, top2, top3, top4 = st.columns(4)
-top1.metric("Vitórias", st.session_state.wins)
-top2.metric("Berries", f"{st.session_state.berries:,}".replace(",", "."))
-top3.metric("Progresso", f"{st.session_state.stage_index}/5")
-top4.metric("Tripulantes", len(st.session_state.crew))
+def render_journey_view() -> None:
+    heading, action = st.columns([0.76, 0.24])
+    with heading:
+        st.header("🗺️ Nossa jornada")
+    with action:
+        if st.button(
+            "Desistir da campanha",
+            width="stretch",
+            help="Abandona a jornada e retorna à formação da tripulação.",
+        ):
+            reset_campaign()
+            st.rerun()
 
-journey_tab, crew_tab, ranking_tab, rules_tab = st.tabs(
-    ["🗺️ Jornada", "🏴‍☠️ Tripulação", "📊 Ranking", "📜 Funções"]
-)
+    top1, top2, top3, top4 = st.columns(4)
+    top1.metric("Vitórias", st.session_state.wins)
+    top2.metric("Berries", f"{st.session_state.berries:,}".replace(",", "."))
+    top3.metric("Progresso", f"{st.session_state.stage_index}/{len(STAGES)}")
+    top4.metric("Tripulantes", len(st.session_state.crew))
 
-with journey_tab:
     render_map()
     st.write("")
 
@@ -1024,11 +1071,29 @@ with journey_tab:
                     begin_battle(stage)
                 st.rerun()
 
-with crew_tab:
+
+def render_role_guide() -> None:
+    cards = []
+    for role, data in ROLES.items():
+        cards.append(
+            f"""
+            <div class="rule-card">
+                <div class="rule-icon">{data['icon']}</div>
+                <div class="rule-title">{html.escape(role)}</div>
+                <div class="rule-copy">{html.escape(data['description'])}</div>
+            </div>
+            """
+        )
+    with st.expander("📜 Guia de funções"):
+        st.html(f'<div class="crew-grid">{"".join(cards)}</div>')
+
+
+def render_crew_view() -> None:
+    st.header("🏴‍☠️ Tripulação")
+    crew_complete = len(st.session_state.crew) == len(ROLES)
     action1, action2, action3 = st.columns([0.34, 0.33, 0.33])
     with action1:
         has_candidate = bool(st.session_state.draft_team)
-        crew_complete = len(st.session_state.crew) == len(ROLES)
         rerolls_left = 2 - st.session_state.crew_rerolls
         draft_label = (
             f"🎲 Resortear grupo ({rerolls_left} restantes)"
@@ -1057,13 +1122,23 @@ with crew_tab:
             st.session_state.last_recruitment = None
             st.rerun()
     with action2:
-        if st.button(
-            "🔁 Reiniciar campanha",
-            width="stretch",
-            help="Recomeça a jornada desde a formação da tripulação.",
-        ):
-            reset_campaign()
-            st.rerun()
+        if crew_complete:
+            if st.button(
+                "Jogar",
+                type="primary",
+                width="stretch",
+                help="Inicia a jornada com a tripulação formada.",
+            ):
+                st.session_state.current_view = "journey"
+                st.rerun()
+        elif st.session_state.crew or st.session_state.draft_team:
+            if st.button(
+                "Recomeçar formação",
+                width="stretch",
+                help="Descarta as escolhas atuais e começa uma nova formação.",
+            ):
+                reset_campaign()
+                st.rerun()
     with action3:
         st.metric(
             "Composição da equipe",
@@ -1092,10 +1167,16 @@ with crew_tab:
                 )
                 st.write(f"OVER **{character['rank']}**")
                 st.caption(
-                    f"ATQ {character['attack_rank']} · "
-                    f"DEF {character['defense_rank']} · "
-                    f"HP {character['hp_rank']} · {character['faction']}"
+                    "Funções: "
+                    + " / ".join(
+                        (
+                            f"{role} "
+                            f"({character['role_ranks'][role]})"
+                        )
+                        for role in character["roles"]
+                    )
                 )
+                st.caption(character["faction"])
                 if not option["available"]:
                     st.caption(option["unavailable_reason"])
                 else:
@@ -1133,70 +1214,16 @@ with crew_tab:
             tactician["role_ranks"]["Tático"] if tactician else "—",
         )
 
-with ranking_tab:
-    rows = []
-    for item in CHARACTERS:
-        rows.append(
-            {
-                "OVER": item["rank"],
-                "Personagem": item["name"],
-                "Ataque": item["attack_rank"],
-                "Defesa": item["defense_rank"],
-                "HP": item["hp_rank"],
-                "Funções": " / ".join(
-                    f"{role} ({item['role_ranks'][role]})"
-                    for role in item["roles"]
-                ),
-                "Filiação": item["faction"],
-                "_ordem": RANK_ORDER[item["rank"]],
-                "_ataque": RANK_ORDER[item["attack_rank"]],
-            }
-        )
-    ranking_df = pd.DataFrame(rows).sort_values(
-        ["_ordem", "_ataque", "Personagem"],
-        ascending=[False, False, True],
-    )
-    st.dataframe(
-        ranking_df.drop(columns=["_ordem", "_ataque"]),
-        width="stretch",
-        hide_index=True,
-    )
-    st.caption(
-        "Os valores numéricos são internos. O jogador vê somente ranks de SSS a F."
-    )
+    render_role_guide()
 
-    selected_name = st.selectbox(
-        "Ver ficha detalhada",
-        [item["name"] for item in CHARACTERS],
-    )
-    selected = CHARACTER_BY_NAME[selected_name]
-    detail_cols = st.columns(len(selected["roles"]))
-    for index, role in enumerate(selected["roles"]):
-        detail_cols[index].metric(
-            role,
-            selected["role_ranks"][role],
-            help=ROLES[role]["description"],
-        )
-    stat1, stat2, stat3, stat4 = st.columns(4)
-    stat1.metric("OVER", selected["rank"])
-    stat2.metric("Ataque", selected["attack_rank"])
-    stat3.metric("Defesa", selected["defense_rank"])
-    stat4.metric("HP", selected["hp_rank"])
 
-with rules_tab:
-    cards = []
-    for role, data in ROLES.items():
-        cards.append(
-            f"""
-            <div class="rule-card">
-                <div class="rule-icon">{data['icon']}</div>
-                <div class="rule-title">{html.escape(role)}</div>
-                <div class="rule-copy">{html.escape(data['description'])}</div>
-            </div>
-            """
-        )
-    st.html(f'<div class="crew-grid">{"".join(cards)}</div>')
-    st.info(
-        "Aptidões e atributos são exibidos apenas por rank. Os valores "
-        "numéricos permanecem internos ao motor do jogo."
-    )
+if st.session_state.current_view == "journey":
+    if (
+        len(st.session_state.crew) < len(ROLES)
+        and not st.session_state.campaign_destroyed
+    ):
+        st.session_state.current_view = "crew"
+        st.rerun()
+    render_journey_view()
+else:
+    render_crew_view()

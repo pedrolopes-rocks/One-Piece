@@ -74,6 +74,9 @@ O ambiente pode não ter `pytest` instalado. A suíte oficial usa
 ## Interface e mídias
 
 - Textos exibidos ao jogador devem estar em português do Brasil.
+- Não exponha valores numéricos, fórmulas ou explicações sobre regras internas
+  de combate no frontend. Descreva bônus e efeitos de forma qualitativa, sem
+  incluir observações técnicas ou metatextos destinados aos desenvolvedores.
 - Preserve o tema visual marítimo e a legibilidade em telas menores.
 - Mídias consumidas pelo jogo devem permanecer em `assets/`.
 - Evite arquivos temporários, frames intermediários e caches Python no commit.

@@ -189,8 +189,8 @@ class BattleTests(unittest.TestCase):
             def random(self):
                 return self.value
 
-        self.assertTrue(triggers_imu_event(FixedRoll(0.049)))
-        self.assertFalse(triggers_imu_event(FixedRoll(0.05)))
+        self.assertTrue(triggers_imu_event(FixedRoll(0.009)))
+        self.assertFalse(triggers_imu_event(FixedRoll(0.01)))
 
     def test_battle_uses_spreadsheet_hp_and_role_bonuses(self):
         crew = draft_crew(random.Random(12))

@@ -25,12 +25,12 @@ ROLES = OrderedDict(
         },
         "Atacante": {
             "icon": "⚔️",
-            "description": "Recebe 5 pontos adicionais de ataque em combate.",
+            "description": "Recebe pontos adicionais de ataque em combate.",
         },
         "Defensor": {
             "icon": "🛡️",
             "description": (
-                "Recebe 5 pontos adicionais de defesa e pode interceptar "
+                "Recebe pontos adicionais de defesa e pode interceptar "
                 "golpes destinados a aliados."
             ),
         },

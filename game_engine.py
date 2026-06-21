@@ -18,7 +18,7 @@ IMPORTANT_ROLES = {"Capitão", "Imediato", "Tático", "Espião"}
 
 def triggers_imu_event(
     rng: random.Random | None = None,
-    chance: float = 0.05,
+    chance: float = 0.01,
 ) -> bool:
     """Return whether Imu erases the current island before the battle."""
     rng = rng or random.Random()
