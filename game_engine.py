@@ -16,7 +16,7 @@ from game_data import (
 
 
 IMPORTANT_ROLES = {"Capitão", "Imediato", "Tático", "Espião"}
-ISLAND_POWER_STEP = 0.20
+ISLAND_POWER_STEP = 0.05
 MIN_COMMON_ENEMY_GROUP_SIZE = 6
 BLUE_MAX_LOCATION_INDEX = 5
 

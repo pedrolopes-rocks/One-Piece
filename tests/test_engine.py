@@ -345,7 +345,7 @@ class BattleTests(unittest.TestCase):
         )
         self.assertFalse(result["attempted"])
 
-    def test_island_attack_difficulty_stops_growing_after_blue(self):
+    def test_island_attack_difficulty_adds_five_percent_and_stops_after_blue(self):
         character = next(
             item
             for item in ENEMY_CHARACTERS
@@ -360,13 +360,13 @@ class BattleTests(unittest.TestCase):
             attack, durability = enemy_combat_multipliers(
                 character, island, 6
             )
-            self.assertEqual(attack, 1 + 0.20 * (island - 1))
+            self.assertEqual(attack, 1 + 0.05 * (island - 1))
             self.assertEqual(durability, 1.0)
         paradise_attack, paradise_durability = enemy_combat_multipliers(
             character, 10, 6
         )
         self.assertEqual(island_power_index(10), 4)
-        self.assertEqual(paradise_attack, 1.80)
+        self.assertEqual(paradise_attack, 1.20)
         self.assertEqual(paradise_durability, 1.0)
 
     def test_high_tiers_and_enemy_captains_receive_significant_bonuses(self):
