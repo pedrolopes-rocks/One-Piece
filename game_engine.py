@@ -17,7 +17,8 @@ from game_data import (
 
 IMPORTANT_ROLES = {"Capitão", "Imediato", "Tático", "Espião"}
 ISLAND_POWER_STEP = 0.20
-MIN_COMMON_ENEMY_GROUP_SIZE = 5
+MIN_COMMON_ENEMY_GROUP_SIZE = 6
+BLUE_MAX_LOCATION_INDEX = 5
 
 
 def triggers_imu_event(
@@ -99,6 +100,10 @@ def _boss_key(boss: dict | None) -> str:
     if name == "Shanks":
         return "shanks"
     return f"{phase}:{name}:{faction}"
+
+
+def island_power_index(location_index: int) -> int:
+    return max(0, min(location_index, BLUE_MAX_LOCATION_INDEX) - 1)
 
 
 def _valid_roles(character: dict, selected_crew: dict[str, dict]) -> list[str]:
@@ -322,8 +327,8 @@ def enemy_combat_multipliers(
     location_index: int,
     team_size: int,
 ) -> tuple[float, float]:
-    island_attack_multiplier = 1 + ISLAND_POWER_STEP * max(
-        0, location_index - 1
+    island_attack_multiplier = 1 + ISLAND_POWER_STEP * island_power_index(
+        location_index
     )
     size_multiplier = 1 + max(0, 6 - team_size) * 0.25
     tier_multiplier = {
@@ -575,7 +580,7 @@ def start_battle(
         "command_mode": "captain",
         "enemy_size_multiplier": 1 + max(0, 6 - len(enemies)) * 0.25,
         "island_difficulty_multiplier": 1
-        + ISLAND_POWER_STEP * max(0, stage["location_index"] - 1),
+        + ISLAND_POWER_STEP * island_power_index(stage["location_index"]),
         "player_role_modifiers_disabled": not role_modifiers,
         "boss_events": set(),
         "post_battle": {

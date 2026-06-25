@@ -498,6 +498,7 @@ def initialize_state() -> None:
         "selected_boss_locations": {},
         "crew_statuses": {},
         "boss_messages": [],
+        "allow_understaffed_journey": False,
         "battle_frames": [],
         "battle_frame_index": 0,
         "battle_animation_active": False,
@@ -576,6 +577,7 @@ def reset_campaign() -> None:
     )
     st.session_state.crew_statuses = {}
     st.session_state.boss_messages = []
+    st.session_state.allow_understaffed_journey = False
     st.session_state.battle_frames = []
     st.session_state.battle_frame_index = 0
     st.session_state.battle_animation_active = False
@@ -889,6 +891,7 @@ def complete_stage() -> None:
             for role, character in st.session_state.crew.items()
             if character["name"] not in remove_names
         }
+        st.session_state.allow_understaffed_journey = True
     st.session_state.crew_statuses.update(aftermath["statuses"])
     st.session_state.boss_messages = aftermath["messages"]
     st.session_state.berries += stage["reward"]
@@ -943,9 +946,13 @@ def begin_battle(stage: dict) -> None:
         frames.append(copy.deepcopy(battle))
 
     if battle["status"] == "victory":
+        if battle["stage"].get("boss_key"):
+            message = "Vitória. A rota para a próxima ilha foi aberta."
+        else:
+            message = "Vitória. Escolha se deseja tentar um recrutamento."
         st.session_state.last_battle_result = {
             "status": "victory",
-            "message": "Vitória. Escolha se deseja tentar um recrutamento.",
+            "message": message,
         }
     else:
         st.session_state.last_battle_result = {
@@ -1006,6 +1013,12 @@ def render_battle_animation() -> None:
 
 def render_recruitment() -> None:
     battle = st.session_state.battle
+    if battle["stage"].get("boss_key"):
+        st.info("Após esse confronto, a tripulação segue viagem sem recrutamento.")
+        if st.button("Seguir viagem", type="primary"):
+            complete_stage()
+            st.rerun()
+        return
     alive_roles = {
         fighter["assigned_role"]
         for fighter in battle["player"]
@@ -1191,7 +1204,10 @@ def render_journey_view() -> None:
         if st.button("🔁 Iniciar nova campanha", type="primary"):
             reset_campaign()
             st.rerun()
-    elif len(st.session_state.crew) < len(ROLES):
+    elif (
+        len(st.session_state.crew) < len(ROLES)
+        and not st.session_state.allow_understaffed_journey
+    ):
         st.warning(
             "A tripulação precisa ocupar as seis funções antes de partir."
         )
@@ -1397,6 +1413,7 @@ if st.session_state.current_view == "journey":
     if (
         len(st.session_state.crew) < len(ROLES)
         and not st.session_state.campaign_destroyed
+        and not st.session_state.allow_understaffed_journey
     ):
         st.session_state.current_view = "crew"
         st.rerun()

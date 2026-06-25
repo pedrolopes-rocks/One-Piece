@@ -21,6 +21,7 @@ from game_engine import (
     draft_candidate_group,
     draft_crew,
     enemy_combat_multipliers,
+    island_power_index,
     play_round,
     recruitment_roll,
     replace_survivor_with_recruit,
@@ -242,6 +243,14 @@ class EnemyTeamTests(unittest.TestCase):
             for seed in range(80)
         }
         self.assertNotIn("Chapéus de Palha", selected)
+        for group in selected:
+            members = [
+                character
+                for character in ENEMY_CHARACTERS
+                if group in character["draw_groups"]
+                and character["arc"] == "East Blue"
+            ]
+            self.assertGreaterEqual(len(members), 6)
 
     def test_campaign_chooses_one_boss_per_part(self):
         bosses = choose_campaign_bosses(random.Random(1))
@@ -336,7 +345,7 @@ class BattleTests(unittest.TestCase):
         )
         self.assertFalse(result["attempted"])
 
-    def test_island_attack_difficulty_adds_twenty_percent_per_stage(self):
+    def test_island_attack_difficulty_stops_growing_after_blue(self):
         character = next(
             item for item in ENEMY_CHARACTERS if item["rank"] == "C"
         )
@@ -351,6 +360,12 @@ class BattleTests(unittest.TestCase):
             )
             self.assertEqual(attack, 1 + 0.20 * (island - 1))
             self.assertEqual(durability, 1.0)
+        paradise_attack, paradise_durability = enemy_combat_multipliers(
+            character, 10, 6
+        )
+        self.assertEqual(island_power_index(10), 4)
+        self.assertEqual(paradise_attack, 1.80)
+        self.assertEqual(paradise_durability, 1.0)
 
     def test_high_tiers_and_enemy_captains_receive_significant_bonuses(self):
         tier_a = next(
