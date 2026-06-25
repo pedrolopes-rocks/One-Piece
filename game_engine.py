@@ -17,6 +17,7 @@ from game_data import (
 
 IMPORTANT_ROLES = {"Capitão", "Imediato", "Tático", "Espião"}
 ISLAND_POWER_STEP = 0.20
+MIN_COMMON_ENEMY_GROUP_SIZE = 5
 
 
 def triggers_imu_event(
@@ -35,6 +36,24 @@ def choose_campaign_bosses(rng: random.Random | None = None) -> dict[str, dict]:
         for phase, bosses in BOSSES_BY_PHASE.items()
         if bosses
     }
+
+
+def choose_campaign_boss_locations(
+    stages: Iterable[dict],
+    bosses: dict[str, dict],
+    rng: random.Random | None = None,
+) -> dict[str, int]:
+    rng = rng or random.Random()
+    locations = {}
+    for phase in bosses:
+        candidates = [
+            stage["location_index"]
+            for stage in stages
+            if stage.get("phase") == phase
+        ]
+        if candidates:
+            locations[phase] = rng.choice(candidates)
+    return locations
 
 
 def phase_arc(phase: str | None) -> str | None:
@@ -434,6 +453,15 @@ def enemy_group_strength(group: str, arc: str | None = None) -> float:
     ) / (3 * len(members))
 
 
+def enemy_group_size(group: str, arc: str | None = None) -> int:
+    return sum(
+        1
+        for character in ENEMY_CHARACTERS
+        if group in character["draw_groups"]
+        and _same_arc(character, arc)
+    )
+
+
 def select_enemy_group(
     location_index: int,
     rng: random.Random | None = None,
@@ -452,6 +480,7 @@ def select_enemy_group(
             and _same_arc(character, arc)
             for character in ENEMY_CHARACTERS
         )
+        and enemy_group_size(group, arc) >= MIN_COMMON_ENEMY_GROUP_SIZE
     ]
     if not available_groups:
         raise RuntimeError("Todas as filiações inimigas já foram enfrentadas.")

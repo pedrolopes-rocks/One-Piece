@@ -17,6 +17,7 @@ from game_engine import (
     _damage,
     boss_aftermath,
     choose_campaign_bosses,
+    choose_campaign_boss_locations,
     draft_candidate_group,
     draft_crew,
     enemy_combat_multipliers,
@@ -64,6 +65,14 @@ class DataTests(unittest.TestCase):
         self.assertEqual(luffy["attack"], 75)
         self.assertEqual(luffy["hp_rank"], "B")
         self.assertEqual(luffy["max_hp"], 75)
+
+    def test_moomoo_is_not_a_straw_hat_enemy_group(self):
+        moomoo = next(
+            character
+            for character in ENEMY_CHARACTERS
+            if character["name"] == "MooMoo"
+        )
+        self.assertEqual(moomoo["draw_groups"], ["Piratas do Arlong"])
 
 
 class CrewTests(unittest.TestCase):
@@ -227,11 +236,25 @@ class EnemyTeamTests(unittest.TestCase):
         self.assertTrue(all(character["arc"] == "East Blue" for character in blue_team))
         self.assertTrue(all(character["arc"] == "Paraíso" for character in paradise_team))
 
+    def test_small_enemy_groups_are_not_selected_as_common_filiations(self):
+        selected = {
+            select_enemy_group(1, random.Random(seed), arc="East Blue")
+            for seed in range(80)
+        }
+        self.assertNotIn("Chapéus de Palha", selected)
+
     def test_campaign_chooses_one_boss_per_part(self):
         bosses = choose_campaign_bosses(random.Random(1))
         self.assertEqual(set(bosses), {"Blue", "Paraíso"})
         self.assertEqual(bosses["Blue"]["phase"], "Blue")
         self.assertEqual(bosses["Paraíso"]["phase"], "Paraíso")
+        locations = choose_campaign_boss_locations(
+            STAGES,
+            bosses,
+            random.Random(2),
+        )
+        self.assertIn(locations["Blue"], {1, 2, 3, 4, 5})
+        self.assertIn(locations["Paraíso"], {6, 7, 8, 9, 10})
         stage = {**STAGES[4], "boss": bosses["Blue"]}
         team = select_enemy_team(stage, random.Random(1))
         self.assertEqual(

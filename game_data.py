@@ -210,6 +210,10 @@ def _character_from_row(row: dict[str, str], *, enemy: bool) -> dict:
     draw_groups = [
         group for group in (row.get("C"), row.get("D")) if group
     ]
+    if enemy and row["A"] == "MooMoo":
+        draw_groups = [
+            group for group in draw_groups if group != "Chapéus de Palha"
+        ]
     attack_rank = _coerce_rank(row, "J", "K")
     defense_rank = _coerce_rank(row, "L", "M")
     hp_rank = _coerce_rank(row, "N", "O")

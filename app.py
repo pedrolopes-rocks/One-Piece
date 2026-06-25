@@ -18,6 +18,7 @@ from game_data import (
 from game_engine import (
     boss_aftermath,
     choose_campaign_bosses,
+    choose_campaign_boss_locations,
     draft_candidate_group,
     play_round,
     recruitment_roll,
@@ -494,6 +495,7 @@ def initialize_state() -> None:
         "destroyed_location_index": None,
         "faced_enemy_groups": [],
         "selected_bosses": {},
+        "selected_boss_locations": {},
         "crew_statuses": {},
         "boss_messages": [],
         "battle_frames": [],
@@ -538,6 +540,12 @@ def initialize_state() -> None:
         st.session_state.selected_bosses = choose_campaign_bosses(
             random.Random(st.session_state.game_seed)
         )
+    if not st.session_state.selected_boss_locations:
+        st.session_state.selected_boss_locations = choose_campaign_boss_locations(
+            STAGES,
+            st.session_state.selected_bosses,
+            random.Random(st.session_state.game_seed + 1),
+        )
 
 
 def reset_campaign() -> None:
@@ -560,6 +568,11 @@ def reset_campaign() -> None:
     st.session_state.faced_enemy_groups = []
     st.session_state.selected_bosses = choose_campaign_bosses(
         random.Random(st.session_state.game_seed)
+    )
+    st.session_state.selected_boss_locations = choose_campaign_boss_locations(
+        STAGES,
+        st.session_state.selected_bosses,
+        random.Random(st.session_state.game_seed + 1),
     )
     st.session_state.crew_statuses = {}
     st.session_state.boss_messages = []
@@ -634,13 +647,17 @@ def render_crew_grid() -> None:
 
 def battle_board_html(battle: dict) -> str:
     def lineup(fighters: list[dict], side: str) -> str:
-        rows = "".join(
-            (
-                f'<div class="fighter-name '
-                f'{"alive" if fighter["alive"] else "defeated"}">'
+        def fighter_row(fighter: dict) -> str:
+            status = "alive" if fighter["alive"] else "defeated"
+            style = ' style="color:#d7322d;"' if fighter.get("boss_member") else ""
+            return (
+                f'<div class="fighter-name {status}"{style}>'
                 f'{html.escape(fighter["name"])} '
                 f'({html.escape(fighter["assigned_role"][0])})</div>'
             )
+
+        rows = "".join(
+            fighter_row(fighter)
             for fighter in fighters
         )
         title = "Sua tripulação" if side == "player" else "Inimigos"
@@ -887,7 +904,10 @@ def complete_stage() -> None:
 
 def begin_battle(stage: dict) -> None:
     battle_stage = copy.deepcopy(stage)
-    if battle_stage.get("boss_slot"):
+    boss_location = st.session_state.selected_boss_locations.get(
+        battle_stage["phase"]
+    )
+    if battle_stage["location_index"] == boss_location:
         boss = st.session_state.selected_bosses.get(battle_stage["phase"])
         if boss:
             battle_stage["boss"] = boss
@@ -1188,19 +1208,26 @@ def render_journey_view() -> None:
         with col_info:
             st.subheader(stage["name"])
             st.write(stage["description"])
-            if stage.get("boss_slot"):
+            boss_location = st.session_state.selected_boss_locations.get(
+                stage["phase"]
+            )
+            if stage["location_index"] == boss_location:
                 boss = st.session_state.selected_bosses.get(stage["phase"])
-                enemy_text = (
-                    f"Boss da parte: {boss['name']}."
-                    if boss
-                    else "Boss da parte."
-                )
+                if boss:
+                    st.markdown(
+                        "Boss da parte: "
+                        f"<span style='color:#ff4b43;font-weight:800'>"
+                        f"{html.escape(boss['name'])}</span>.",
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.caption("Boss da parte.")
             else:
-                enemy_text = (
+                st.caption(
                     "A filiação inimiga será sorteada ao iniciar o confronto."
                 )
             st.caption(
-                f"{enemy_text} Até 6 inimigos • Recompensa: "
+                "Até 6 inimigos • Recompensa: "
                 f"{stage['reward']:,} berries".replace(",", ".")
             )
         with col_action:
@@ -1330,7 +1357,10 @@ def render_crew_view() -> None:
                         role_rank = character["role_ranks"][role]
                         if st.button(
                             f"{ROLES[role]['icon']} {role} · Rank {role_rank}",
-                            key=f"choose_{character['name']}_{role}",
+                            key=(
+                                f"choose_{draw['group']}_{option_index}_"
+                                f"{character['name']}_{role}"
+                            ),
                             type="primary",
                             width="stretch",
                         ):
