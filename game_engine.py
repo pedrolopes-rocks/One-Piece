@@ -5,6 +5,8 @@ import random
 from typing import Callable, Iterable
 
 from game_data import (
+    BOSSES_BY_PHASE,
+    CHARACTER_BY_NAME,
     ENEMY_CHARACTERS,
     ENEMY_GROUPS,
     PLAYABLE_CHARACTERS,
@@ -14,6 +16,7 @@ from game_data import (
 
 
 IMPORTANT_ROLES = {"Capitão", "Imediato", "Tático", "Espião"}
+ISLAND_POWER_STEP = 0.20
 
 
 def triggers_imu_event(
@@ -23,6 +26,60 @@ def triggers_imu_event(
     """Return whether Imu erases the current island before the battle."""
     rng = rng or random.Random()
     return rng.random() < chance
+
+
+def choose_campaign_bosses(rng: random.Random | None = None) -> dict[str, dict]:
+    rng = rng or random.Random()
+    return {
+        phase: copy.deepcopy(rng.choice(bosses))
+        for phase, bosses in BOSSES_BY_PHASE.items()
+        if bosses
+    }
+
+
+def phase_arc(phase: str | None) -> str | None:
+    if phase == "Blue":
+        return "East Blue"
+    if phase in {"Paraíso", "ParaÃ­so"}:
+        return phase
+    return None
+
+
+def _same_arc(character: dict, arc: str | None) -> bool:
+    return not arc or character.get("arc") == arc
+
+
+def _boss_key(boss: dict | None) -> str:
+    if not boss:
+        return ""
+    name = boss.get("name", "")
+    phase = boss.get("phase", "")
+    faction = boss.get("faction", "")
+    if name.startswith("Marinha"):
+        return "smoker_blue"
+    if name == "Piratas Gigante":
+        return "giants"
+    if name == "Luffy" and phase == "Blue":
+        return "luffy_blue"
+    if name == "Luffy":
+        return "luffy_paradise"
+    if name == "Teach":
+        return "teach"
+    if name == "Foxy":
+        return "foxy"
+    if name == "Kuzan":
+        return "kuzan"
+    if name == "Spandam":
+        return "spandam"
+    if name == "Enel":
+        return "enel"
+    if name == "Crocodile":
+        return "crocodile"
+    if name == "Mihawk":
+        return "mihawk"
+    if name == "Shanks":
+        return "shanks"
+    return f"{phase}:{name}:{faction}"
 
 
 def _valid_roles(character: dict, selected_crew: dict[str, dict]) -> list[str]:
@@ -92,7 +149,7 @@ def draft_candidate_group(
             valid_option_roles = []
             if not already_selected:
                 for role in roles:
-                    tentative = copy.deepcopy(selected_crew)
+                    tentative = dict(selected_crew)
                     tentative[role] = character
                     if _can_complete_crew(tentative):
                         valid_option_roles.append(role)
@@ -185,10 +242,18 @@ def team_summary(crew: dict[str, dict]) -> dict[str, float]:
     }
 
 
-def _build_fighter(character: dict, assigned_role: str) -> dict:
-    attack = character["attack"] + (5 if assigned_role == "Atacante" else 0)
+def _build_fighter(
+    character: dict,
+    assigned_role: str,
+    *,
+    role_modifiers: bool = True,
+) -> dict:
+    attack = character["attack"] + (
+        5 if role_modifiers and assigned_role == "Atacante" else 0
+    )
     defense = (
-        character["defense"] + (5 if assigned_role == "Defensor" else 0)
+        character["defense"]
+        + (5 if role_modifiers and assigned_role == "Defensor" else 0)
     )
     max_hp = max(1, character["max_hp"])
     return {
@@ -207,6 +272,10 @@ def _build_fighter(character: dict, assigned_role: str) -> dict:
         "hp": max_hp,
         "alive": True,
         "recruitment_chance": character.get("recruitment_chance"),
+        "source_arc": character.get("arc"),
+        "boss_member": False,
+        "critical_bonus": 0.0,
+        "skip_rounds": 0,
     }
 
 
@@ -234,7 +303,9 @@ def enemy_combat_multipliers(
     location_index: int,
     team_size: int,
 ) -> tuple[float, float]:
-    island_attack_multiplier = 1 + 0.25 * max(0, location_index - 1)
+    island_attack_multiplier = 1 + ISLAND_POWER_STEP * max(
+        0, location_index - 1
+    )
     size_multiplier = 1 + max(0, 6 - team_size) * 0.25
     tier_multiplier = {
         "SSS": 1.55,
@@ -253,6 +324,56 @@ def enemy_combat_multipliers(
     return attack_multiplier, durability_multiplier
 
 
+def _character_for_boss_name(name: str, boss: dict, arc: str | None) -> dict:
+    pools = [ENEMY_CHARACTERS, PLAYABLE_CHARACTERS]
+    for pool in pools:
+        matches = [
+            character
+            for character in pool
+            if character["name"] == name
+            and _same_arc(character, arc)
+            and (
+                not boss.get("faction")
+                or character.get("faction") == boss["faction"]
+                or boss["faction"] in character.get("faction", "")
+                or character.get("faction", "") in boss["faction"]
+            )
+        ]
+        if matches:
+            return matches[0]
+    for pool in pools:
+        matches = [
+            character
+            for character in pool
+            if character["name"] == name and _same_arc(character, arc)
+        ]
+        if matches:
+            return matches[0]
+    if name in CHARACTER_BY_NAME:
+        return CHARACTER_BY_NAME[name]
+    raise RuntimeError(f"Personagem obrigatório do boss não encontrado: {name}.")
+
+
+def _select_boss_team(stage: dict, maximum: int) -> list[dict]:
+    boss = stage["boss"]
+    arc = stage.get("arc") or boss.get("arc") or phase_arc(stage.get("phase"))
+    team = []
+    seen = set()
+    for name in boss.get("required_names", []):
+        character = copy.deepcopy(_character_for_boss_name(name, boss, arc))
+        if character["name"] in seen:
+            continue
+        character["recruitment_chance"] = None
+        character["boss_member"] = True
+        team.append(character)
+        seen.add(character["name"])
+        if len(team) >= maximum:
+            break
+    if not team:
+        raise RuntimeError(f"Boss sem equipe obrigatória: {boss['name']}.")
+    return team
+
+
 def select_enemy_team(
     stage: dict,
     rng: random.Random | None = None,
@@ -260,13 +381,18 @@ def select_enemy_team(
 ) -> list[dict]:
     """Select up to six unique enemies from one group."""
     rng = rng or random.Random()
+    if isinstance(stage.get("boss"), dict):
+        return _select_boss_team(stage, maximum)
+
+    arc = stage.get("arc") or phase_arc(stage.get("phase"))
     group = stage.get("enemy_group") or select_enemy_group(
-        stage["location_index"], rng
+        stage["location_index"], rng, arc=arc
     )
     eligible = [
         character
         for character in ENEMY_CHARACTERS
         if group in character["draw_groups"]
+        and _same_arc(character, arc)
     ]
     if not eligible:
         raise RuntimeError(f"Nenhum inimigo encontrado para o grupo {group}.")
@@ -293,11 +419,12 @@ def select_enemy_team(
     return copy.deepcopy(ordered[:maximum])
 
 
-def enemy_group_strength(group: str) -> float:
+def enemy_group_strength(group: str, arc: str | None = None) -> float:
     members = [
         character
         for character in ENEMY_CHARACTERS
         if group in character["draw_groups"]
+        and _same_arc(character, arc)
     ]
     if not members:
         return 0.0
@@ -311,16 +438,27 @@ def select_enemy_group(
     location_index: int,
     rng: random.Random | None = None,
     excluded_groups: set[str] | None = None,
+    arc: str | None = None,
 ) -> str:
     """Favor stronger affiliations as the campaign approaches its end."""
     rng = rng or random.Random()
     excluded_groups = excluded_groups or set()
     available_groups = [
-        group for group in ENEMY_GROUPS if group not in excluded_groups
+        group
+        for group in ENEMY_GROUPS
+        if group not in excluded_groups
+        and any(
+            group in character["draw_groups"]
+            and _same_arc(character, arc)
+            for character in ENEMY_CHARACTERS
+        )
     ]
     if not available_groups:
         raise RuntimeError("Todas as filiações inimigas já foram enfrentadas.")
-    ranked_groups = sorted(available_groups, key=enemy_group_strength)
+    ranked_groups = sorted(
+        available_groups,
+        key=lambda group: enemy_group_strength(group, arc),
+    )
     if len(ranked_groups) == 1:
         return ranked_groups[0]
     progress = max(0.0, min(1.0, (location_index - 1) / 4))
@@ -338,22 +476,48 @@ def start_battle(
     stage: dict,
     rng: random.Random | None = None,
     excluded_groups: set[str] | None = None,
+    crew_statuses: dict[str, dict] | None = None,
 ) -> dict:
     rng = rng or random.Random()
-    enemy_group = stage.get("enemy_group") or select_enemy_group(
-        stage["location_index"], rng, excluded_groups
-    )
+    crew_statuses = crew_statuses or {}
+    arc = stage.get("arc") or phase_arc(stage.get("phase"))
     battle_stage = copy.deepcopy(stage)
-    battle_stage["enemy_group"] = enemy_group
+    boss = battle_stage.get("boss") if isinstance(battle_stage.get("boss"), dict) else None
+    if boss:
+        battle_stage["enemy_group"] = boss["faction"] or boss["name"]
+        battle_stage["boss_key"] = _boss_key(boss)
+    else:
+        enemy_group = stage.get("enemy_group") or select_enemy_group(
+            stage["location_index"], rng, excluded_groups, arc
+        )
+        battle_stage["enemy_group"] = enemy_group
+        battle_stage["boss_key"] = ""
+    active_crew = {}
+    inactive_player = []
+    for role, character in crew.items():
+        status = crew_statuses.get(character["name"])
+        if status and status.get("skip_battles", 0) > 0:
+            inactive_player.append(
+                {
+                    "name": character["name"],
+                    "assigned_role": role,
+                    "status": status.get("kind", "debilitado"),
+                }
+            )
+        else:
+            active_crew[role] = character
+    role_modifiers = battle_stage["boss_key"] != "teach"
     player = [
-        _build_fighter(character, role)
-        for role, character in crew.items()
+        _build_fighter(character, role, role_modifiers=role_modifiers)
+        for role, character in active_crew.items()
     ]
     enemy_characters = select_enemy_team(battle_stage, rng)
     enemies = [
         _build_fighter(character, character["roles"][0])
         for character in enemy_characters
     ]
+    for fighter, character in zip(enemies, enemy_characters):
+        fighter["boss_member"] = bool(character.get("boss_member"))
     enemies = [
         _apply_enemy_size_bonus(
             fighter,
@@ -363,16 +527,17 @@ def start_battle(
         )
         for fighter, character in zip(enemies, enemy_characters)
     ]
-    return {
+    battle = {
         "round": 0,
         "stage": battle_stage,
         "player": player,
+        "inactive_player": inactive_player,
         "enemies": enemies,
         "status": "active",
         "log": [
             f"⚓ Batalha iniciada em {stage['name']}.",
             (
-                f"🚨 Grupo inimigo: {enemy_group} "
+                f"🚨 Grupo inimigo: {battle_stage['enemy_group']} "
                 f"({len(enemies)} integrantes)."
             ),
         ],
@@ -381,8 +546,24 @@ def start_battle(
         "command_mode": "captain",
         "enemy_size_multiplier": 1 + max(0, 6 - len(enemies)) * 0.25,
         "island_difficulty_multiplier": 1
-        + 0.25 * max(0, stage["location_index"] - 1),
+        + ISLAND_POWER_STEP * max(0, stage["location_index"] - 1),
+        "player_role_modifiers_disabled": not role_modifiers,
+        "boss_events": set(),
+        "post_battle": {
+            "lost_names": [],
+            "debilitated_names": [],
+            "frozen_names": [],
+        },
     }
+    if battle_stage["boss_key"] == "giants":
+        for fighter in battle["enemies"]:
+            if fighter["name"] in {"Dorry", "Broggy"}:
+                fighter["attack"] = max(1, round(fighter["attack"] * 3))
+        battle["log"].append("🗿 Os gigantes iniciaram o duelo com força esmagadora.")
+    if inactive_player:
+        names = ", ".join(item["name"] for item in inactive_player)
+        battle["log"].append(f"🌫️ Fora de combate nesta ilha: {names}.")
+    return battle
 
 
 def _alive(fighters: Iterable[dict]) -> list[dict]:
@@ -408,7 +589,9 @@ def _damage(
     attack_multiplier: float = 1.0,
     defense_multiplier: float = 1.0,
 ) -> tuple[int, bool, bool, bool]:
-    critical_chance = 0.05 + tactical_crit_bonus
+    critical_chance = 0.05 + tactical_crit_bonus + attacker.get(
+        "critical_bonus", 0.0
+    )
     critical = rng.random() < min(0.40, critical_chance)
     damage = max(1, round(attacker["attack"] * attack_multiplier * 0.35))
     if critical:
@@ -426,7 +609,12 @@ def _damage(
     return damage, critical, defended, False
 
 
-def _tactical_crit_bonus(fighters: list[dict]) -> float:
+def _tactical_crit_bonus(
+    fighters: list[dict],
+    disabled: bool = False,
+) -> float:
+    if disabled:
+        return 0.0
     tactician = _find_role(fighters, "Tático")
     if not tactician:
         return 0.0
@@ -445,6 +633,9 @@ def _resolve_spy(battle: dict, rng: random.Random) -> None:
     if battle["spy_resolved"]:
         return
     battle["spy_resolved"] = True
+    if battle.get("player_role_modifiers_disabled"):
+        battle["log"].append("🌑 A tripulação não conseguiu ativar suas funções.")
+        return
     spy = _find_role(battle["player"], "Espião")
     if not spy:
         battle["log"].append("🕶️ O time não possui espião disponível.")
@@ -485,6 +676,9 @@ def _resolve_spy(battle: dict, rng: random.Random) -> None:
 
 def _command_multipliers(battle: dict) -> tuple[float, float, list[str]]:
     notes: list[str] = []
+    if battle.get("player_role_modifiers_disabled"):
+        battle["command_mode"] = "none"
+        return 1.0, 1.0, notes
     captain = _find_role(battle["player"], "Capitão")
     immediate = _find_role(battle["player"], "Imediato")
 
@@ -540,7 +734,10 @@ def _maybe_intercept(
     players: list[dict],
     original_target: dict,
     rng: random.Random,
+    disabled: bool = False,
 ) -> tuple[dict, bool]:
+    if disabled:
+        return original_target, False
     defender = _find_role(players, "Defensor")
     if not defender or defender is original_target:
         return original_target, False
@@ -560,6 +757,100 @@ def _maybe_intercept(
     if rng.random() < chance:
         return defender, True
     return original_target, False
+
+
+def _revive(fighter: dict, hp_ratio: float, log: list[str]) -> None:
+    fighter["hp"] = max(1, round(fighter["max_hp"] * hp_ratio))
+    fighter["alive"] = True
+    log.append(f"🔥 {fighter['name']} voltou ao combate.")
+
+
+def _handle_enemy_defeat(
+    battle: dict,
+    fighter: dict,
+    rng: random.Random,
+) -> None:
+    key = battle["stage"].get("boss_key", "")
+    events = battle["boss_events"]
+    if key == "luffy_blue" and f"luffy_blue:{fighter['name']}" not in events:
+        if rng.random() < 0.50:
+            events.add(f"luffy_blue:{fighter['name']}")
+            _revive(fighter, 0.50, battle["log"])
+            battle["log"].append(
+                f"🏴‍☠️ {fighter['name']} se ergueu de novo ao lado de Luffy."
+            )
+            return
+    if key == "giants" and fighter["name"] in {"Dorry", "Broggy"}:
+        other_name = "Broggy" if fighter["name"] == "Dorry" else "Dorry"
+        event_key = f"giant_rage:{other_name}"
+        other = next(
+            (
+                enemy
+                for enemy in battle["enemies"]
+                if enemy["name"] == other_name and enemy["alive"]
+            ),
+            None,
+        )
+        if other and event_key not in events:
+            events.add(event_key)
+            other["attack"] = max(1, round(other["attack"] * 2))
+            other["defense"] = max(1, round(other["defense"] * 0.5))
+            battle["log"].append(f"🗿 {other_name} entrou em fúria pelo rival.")
+    if key == "spandam" and fighter["name"] == "Spandam":
+        event_key = "buster_call"
+        if event_key not in events:
+            events.add(event_key)
+            battle["log"].append("💣 Spandam convocou um Buster Call.")
+            for target in _alive(battle["player"]) + _alive(battle["enemies"]):
+                damage = max(1, round(target["max_hp"] * 0.20))
+                _apply_hit(target, damage)
+                battle["log"].append(f"●● {target['name']} foi atingido.")
+    if key == "spandam" and fighter["name"] == "Rob Lucci":
+        event_key = "lucci_zoan"
+        if event_key not in events:
+            events.add(event_key)
+            fighter["attack"] = max(1, round(fighter["attack"] * 1.25))
+            fighter["defense"] = max(1, round(fighter["defense"] * 1.25))
+            fighter["critical_bonus"] = fighter.get("critical_bonus", 0.0) + 0.10
+            _revive(fighter, 0.50, battle["log"])
+            battle["log"].append("🐆 Lucci liberou sua forma animal.")
+    if key == "luffy_paradise" and fighter["name"] == "Luffy":
+        if "gear_2" not in events:
+            events.add("gear_2")
+            fighter["attack"] = max(1, round(fighter["attack"] * 1.50))
+            _revive(fighter, 0.50, battle["log"])
+            battle["log"].append("Gear 2.")
+        elif "gear_3" not in events:
+            events.add("gear_3")
+            fighter["attack"] = max(1, round(fighter["attack"] * 1.70))
+            fighter["defense"] = max(1, round(fighter["defense"] * 1.50))
+            _revive(fighter, 0.25, battle["log"])
+            battle["log"].append("Gear 3.")
+
+
+def _handle_player_defeat(
+    battle: dict,
+    fighter: dict,
+    attacker: dict,
+    rng: random.Random,
+) -> None:
+    key = battle["stage"].get("boss_key", "")
+    if key == "foxy" and rng.random() < 0.75:
+        if fighter["name"] not in battle["post_battle"]["lost_names"]:
+            battle["post_battle"]["lost_names"].append(fighter["name"])
+        turncoat = copy.deepcopy(fighter)
+        turncoat["hp"] = max(1, round(turncoat["max_hp"] * 0.50))
+        turncoat["alive"] = True
+        turncoat["assigned_role"] = turncoat["roles"][0]
+        turncoat["recruitment_chance"] = None
+        battle["enemies"].append(turncoat)
+        battle["log"].append(
+            f"{fighter['name']} deixou o bando após perder no Davy Back Fight."
+        )
+    if key == "kuzan" and attacker["name"] == "Kuzan":
+        if fighter["name"] not in battle["post_battle"]["frozen_names"]:
+            battle["post_battle"]["frozen_names"].append(fighter["name"])
+        battle["log"].append(f"🧊 {fighter['name']} ficou congelado.")
 
 
 def play_round(
@@ -585,14 +876,42 @@ def play_round(
         _command_multipliers(battle)
     )
     battle["log"].extend(notes)
-    player_tactical_bonus = _tactical_crit_bonus(battle["player"])
+    disabled_roles = battle.get("player_role_modifiers_disabled", False)
+    player_tactical_bonus = _tactical_crit_bonus(
+        battle["player"], disabled_roles
+    )
     enemy_tactical_bonus = _tactical_crit_bonus(battle["enemies"])
 
     for attacker in list(_alive(battle["player"])):
         enemy_alive = _alive(battle["enemies"])
         if not attacker["alive"] or not enemy_alive:
             break
-        target = rng.choice(enemy_alive)
+        if attacker.get("skip_rounds", 0) > 0:
+            attacker["skip_rounds"] -= 1
+            battle["log"].append(f"⚡ {attacker['name']} não conseguiu agir.")
+            continue
+        if battle["stage"].get("boss_key") == "foxy" and battle["round"] % 2 == 0:
+            battle["log"].append(f"🌀 {attacker['name']} foi retardado pelo Noro Noro.")
+            continue
+        if battle["stage"].get("boss_key") == "crocodile":
+            index = battle["player"].index(attacker)
+            target = next(
+                (
+                    enemy
+                    for enemy in battle["enemies"][index:index + 1]
+                    if enemy["alive"]
+                ),
+                rng.choice(enemy_alive),
+            )
+        else:
+            target = rng.choice(enemy_alive)
+        if (
+            battle["stage"].get("boss_key") == "smoker_blue"
+            and target["name"] == "Smoker"
+            and rng.random() < 0.50
+        ):
+            battle["log"].append(f"💨 {target['name']} escapou do golpe.")
+            continue
         damage, critical, defended, _ = _damage(
             attacker,
             target,
@@ -609,16 +928,32 @@ def play_round(
         battle["log"].append(
             f"⚔️ {attacker['name']} atingiu {target['name']}{markers}."
         )
-        if eliminated and on_update:
-            on_update(battle)
+        if eliminated:
+            _handle_enemy_defeat(battle, target, rng)
+            if on_update:
+                on_update(battle)
 
     for attacker in list(_alive(battle["enemies"])):
         player_alive = _alive(battle["player"])
         if not attacker["alive"] or not player_alive:
             break
-        original_target = _choose_player_target(player_alive, rng)
+        if attacker.get("skip_rounds", 0) > 0:
+            attacker["skip_rounds"] -= 1
+            continue
+        if battle["stage"].get("boss_key") == "crocodile":
+            index = battle["enemies"].index(attacker)
+            original_target = next(
+                (
+                    player
+                    for player in battle["player"][index:index + 1]
+                    if player["alive"]
+                ),
+                _choose_player_target(player_alive, rng),
+            )
+        else:
+            original_target = _choose_player_target(player_alive, rng)
         target, intercepted = _maybe_intercept(
-            battle["player"], original_target, rng
+            battle["player"], original_target, rng, disabled_roles
         )
         if intercepted:
             battle["log"].append(
@@ -641,8 +976,13 @@ def play_round(
         battle["log"].append(
             f"💥 {attacker['name']} atingiu {target['name']}{markers}."
         )
-        if eliminated and on_update:
-            on_update(battle)
+        if battle["stage"].get("boss_key") == "enel" and target["alive"]:
+            target["skip_rounds"] = max(target.get("skip_rounds", 0), 1)
+            battle["log"].append(f"⚡ {target['name']} ficou paralisado.")
+        if eliminated:
+            _handle_player_defeat(battle, target, attacker, rng)
+            if on_update:
+                on_update(battle)
 
     return _finalize_status(battle)
 
@@ -671,6 +1011,7 @@ def recruitment_roll(
             if enemy["name"] == candidate_name
             and enemy["name"] not in existing_names
             and enemy.get("recruitment_chance") is not None
+            and not enemy.get("boss_member")
         ),
         None,
     )
@@ -708,6 +1049,58 @@ def recruitment_roll(
             else f"{candidate['name']} recusou o convite."
         ),
     }
+
+
+def boss_aftermath(
+    battle: dict,
+    crew: dict[str, dict],
+    rng: random.Random | None = None,
+) -> dict:
+    rng = rng or random.Random()
+    key = battle["stage"].get("boss_key", "")
+    result = {
+        "remove_names": [],
+        "statuses": {},
+        "messages": [],
+    }
+    if battle["status"] != "victory":
+        return result
+
+    if key == "mihawk":
+        for role, character in crew.items():
+            if role == "Capitão":
+                continue
+            if rng.random() < 0.50:
+                result["statuses"][character["name"]] = {
+                    "kind": "debilitado",
+                    "skip_battles": 1,
+                }
+                result["messages"].append(
+                    f"{character['name']} ficou debilitado para a próxima ilha."
+                )
+    if key == "shanks":
+        candidates = [
+            character
+            for role, character in crew.items()
+            if role != "Capitão"
+        ] or list(crew.values())
+        if candidates:
+            taken = rng.choice(candidates)
+            result["remove_names"].append(taken["name"])
+            result["messages"].append(
+                f"{taken['name']} deixou a tripulação após o encontro com Shanks."
+            )
+    for name in battle["post_battle"].get("lost_names", []):
+        result["remove_names"].append(name)
+    for name in battle["post_battle"].get("frozen_names", []):
+        result["statuses"][name] = {
+            "kind": "congelado",
+            "skip_battles": 1,
+        }
+        result["messages"].append(
+            f"{name} ficará congelado na próxima batalha."
+        )
+    return result
 
 
 def replace_survivor_with_recruit(

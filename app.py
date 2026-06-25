@@ -16,6 +16,8 @@ from game_data import (
     STAGES,
 )
 from game_engine import (
+    boss_aftermath,
+    choose_campaign_bosses,
     draft_candidate_group,
     play_round,
     recruitment_roll,
@@ -26,7 +28,7 @@ from game_engine import (
 
 
 st.set_page_config(
-    page_title="Rota dos Mares — Demo East Blue",
+    page_title="Rota dos Mares",
     page_icon="🏴‍☠️",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -189,12 +191,16 @@ h2, h3 { color: #ffe4a3 !important; }
     border-radius: 25px;
     border: 5px solid #c9994f;
     background:
-        radial-gradient(ellipse at 18% 77%, #66b56f 0 2.8%, #d6bc69 3% 4.2%, transparent 4.5%),
-        radial-gradient(ellipse at 27% 50%, #68a65b 0 3%, #ceb668 3.2% 4.5%, transparent 4.8%),
-        radial-gradient(ellipse at 45% 70%, #4e995c 0 3.2%, #d3b267 3.4% 4.7%, transparent 5%),
-        radial-gradient(ellipse at 60% 40%, #72ad64 0 3.6%, #d4b86c 3.8% 5%, transparent 5.3%),
-        radial-gradient(ellipse at 77% 57%, #42925b 0 4%, #d7b96d 4.2% 5.5%, transparent 5.8%),
-        radial-gradient(ellipse at 92% 23%, #6f8753 0 4%, #c7a963 4.2% 5.6%, transparent 5.9%),
+        radial-gradient(ellipse at 7% 66%, #66b56f 0 2.3%, #d6bc69 2.5% 3.4%, transparent 3.7%),
+        radial-gradient(ellipse at 16% 48%, #68a65b 0 2.4%, #ceb668 2.6% 3.6%, transparent 3.9%),
+        radial-gradient(ellipse at 25% 66%, #4e995c 0 2.5%, #d3b267 2.7% 3.7%, transparent 4%),
+        radial-gradient(ellipse at 34% 38%, #72ad64 0 2.5%, #d4b86c 2.7% 3.8%, transparent 4.1%),
+        radial-gradient(ellipse at 43% 54%, #42925b 0 2.8%, #d7b96d 3% 4.1%, transparent 4.4%),
+        radial-gradient(ellipse at 58% 54%, #6aa45c 0 2.3%, #c7a963 2.5% 3.5%, transparent 3.8%),
+        radial-gradient(ellipse at 67% 66%, #5d9d5d 0 2.6%, #ceb668 2.8% 3.8%, transparent 4.1%),
+        radial-gradient(ellipse at 76% 38%, #70a95f 0 2.6%, #d6bc69 2.8% 3.9%, transparent 4.2%),
+        radial-gradient(ellipse at 85% 56%, #5f8f59 0 2.4%, #c7a963 2.6% 3.6%, transparent 3.9%),
+        radial-gradient(ellipse at 94% 40%, #6f8753 0 2.6%, #c7a963 2.8% 3.8%, transparent 4.1%),
         repeating-radial-gradient(circle at 25% 20%, rgba(255,255,255,.08) 0 2px, transparent 3px 30px),
         linear-gradient(155deg, #23a6ba 0%, #087b9e 48%, #075976 100%);
     box-shadow: inset 0 0 55px rgba(2,34,50,.38), 0 16px 35px rgba(0,0,0,.22);
@@ -219,6 +225,71 @@ h2, h3 { color: #ffe4a3 !important; }
     vector-effect: non-scaling-stroke;
 }
 
+.reverse-mountain {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 190px;
+    height: 300px;
+    transform: translate(-50%, -50%);
+    z-index: 1;
+    pointer-events: none;
+}
+.reverse-mountain::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 30px;
+    width: 118px;
+    height: 214px;
+    transform: translateX(-50%);
+    clip-path: polygon(50% 0, 100% 100%, 0 100%);
+    background:
+        linear-gradient(135deg, transparent 0 38%, rgba(255,255,255,.76) 39% 52%, transparent 53%),
+        linear-gradient(160deg, #7f765f 0%, #554b3f 48%, #2f3d45 100%);
+    border: 2px solid rgba(255,239,189,.58);
+    box-shadow: 0 14px 22px rgba(3,34,49,.38);
+}
+.reverse-mountain::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 0;
+    width: 24px;
+    height: 300px;
+    transform: translateX(-50%);
+    border-radius: 999px;
+    background:
+        linear-gradient(
+            to bottom,
+            transparent 0,
+            rgba(191,247,255,.8) 18%,
+            rgba(42,166,186,.9) 52%,
+            rgba(191,247,255,.75) 82%,
+            transparent 100%
+        );
+    opacity: .85;
+}
+.reverse-divider {
+    position: absolute;
+    left: 50%;
+    top: 0;
+    width: 118px;
+    height: 100%;
+    transform: translateX(-50%);
+    z-index: 0;
+    pointer-events: none;
+    background:
+        linear-gradient(
+            to right,
+            transparent 0,
+            rgba(21,73,86,.35) 26%,
+            rgba(230,217,166,.2) 50%,
+            rgba(21,73,86,.35) 74%,
+            transparent 100%
+        );
+}
+
 .map-node {
     position: absolute;
     transform: translate(-50%, -50%);
@@ -233,6 +304,13 @@ h2, h3 { color: #ffe4a3 !important; }
 .map-node.done { background: #2dac75; }
 .map-node.current { background: #e44d3c; animation: pulse 1.45s infinite; }
 .map-node.locked { filter: grayscale(1); opacity: .72; }
+.map-node.reverse {
+    width: 18px;
+    height: 18px;
+    border-color: #fff4ca;
+    background: #1c4d5a;
+    box-shadow: 0 0 0 7px rgba(255,230,154,.2);
+}
 
 .map-label {
     position: absolute;
@@ -245,6 +323,10 @@ h2, h3 { color: #ffe4a3 !important; }
     z-index: 3;
 }
 .map-label small { display: block; color: #bcecf0; font-size: .58rem; margin-top: 3px; }
+.map-label.reverse {
+    transform: translate(-50%, 70px);
+    color: #ffe5a1;
+}
 
 .ship {
     position: absolute;
@@ -411,6 +493,9 @@ def initialize_state() -> None:
         "campaign_destroyed": False,
         "destroyed_location_index": None,
         "faced_enemy_groups": [],
+        "selected_bosses": {},
+        "crew_statuses": {},
+        "boss_messages": [],
         "battle_frames": [],
         "battle_frame_index": 0,
         "battle_animation_active": False,
@@ -449,6 +534,10 @@ def initialize_state() -> None:
         del st.session_state.battle_speed
     if st.session_state.current_view not in {"crew", "journey"}:
         st.session_state.current_view = "crew"
+    if not st.session_state.selected_bosses:
+        st.session_state.selected_bosses = choose_campaign_bosses(
+            random.Random(st.session_state.game_seed)
+        )
 
 
 def reset_campaign() -> None:
@@ -469,6 +558,11 @@ def reset_campaign() -> None:
     st.session_state.campaign_destroyed = False
     st.session_state.destroyed_location_index = None
     st.session_state.faced_enemy_groups = []
+    st.session_state.selected_bosses = choose_campaign_bosses(
+        random.Random(st.session_state.game_seed)
+    )
+    st.session_state.crew_statuses = {}
+    st.session_state.boss_messages = []
     st.session_state.battle_frames = []
     st.session_state.battle_frame_index = 0
     st.session_state.battle_animation_active = False
@@ -550,6 +644,16 @@ def battle_board_html(battle: dict) -> str:
             for fighter in fighters
         )
         title = "Sua tripulação" if side == "player" else "Inimigos"
+        if side == "player":
+            rows += "".join(
+                (
+                    f'<div class="fighter-name defeated" '
+                    f'style="color:#85d8ff;text-decoration:none;">'
+                    f'{html.escape(item["name"])} '
+                    f'({html.escape(item["status"])})</div>'
+                )
+                for item in battle.get("inactive_player", [])
+            )
         return (
             f'<div class="battle-side {side}"><h4>{title}</h4>{rows}</div>'
         )
@@ -602,10 +706,13 @@ def render_map() -> None:
             status = "current"
         else:
             status = "locked"
+        reverse_class = (
+            " reverse" if location["name"] == "Reverse Mountain" else ""
+        )
         node_html.append(
             f"""
-            <div class="map-node {status}" style="left:{location['x']}%;top:{location['y']}%;"></div>
-            <div class="map-label" style="left:{location['x']}%;top:{location['y']}%;">
+            <div class="map-node {status}{reverse_class}" style="left:{location['x']}%;top:{location['y']}%;"></div>
+            <div class="map-label{reverse_class}" style="left:{location['x']}%;top:{location['y']}%;">
                 {html.escape(location['name'])}
                 <small>{html.escape(location['subtitle'])}</small>
             </div>
@@ -627,6 +734,8 @@ def render_map() -> None:
             <svg class="route-svg" viewBox="0 0 100 100" preserveAspectRatio="none">
                 <polyline class="route-path" points="{points}" />
             </svg>
+            <div class="reverse-divider"></div>
+            <div class="reverse-mountain"></div>
             {''.join(node_html)}
             {ship_html}
         </div>
@@ -747,6 +856,24 @@ def render_imu_event() -> None:
 
 def complete_stage() -> None:
     stage = st.session_state.battle["stage"]
+    inactive_names = {
+        item["name"] for item in st.session_state.battle.get("inactive_player", [])
+    }
+    for name in inactive_names:
+        st.session_state.crew_statuses.pop(name, None)
+    aftermath = boss_aftermath(
+        st.session_state.battle,
+        st.session_state.crew,
+    )
+    if aftermath["remove_names"]:
+        remove_names = set(aftermath["remove_names"])
+        st.session_state.crew = {
+            role: character
+            for role, character in st.session_state.crew.items()
+            if character["name"] not in remove_names
+        }
+    st.session_state.crew_statuses.update(aftermath["statuses"])
+    st.session_state.boss_messages = aftermath["messages"]
     st.session_state.berries += stage["reward"]
     st.session_state.wins += 1
     st.session_state.stage_index += 1
@@ -759,10 +886,17 @@ def complete_stage() -> None:
 
 
 def begin_battle(stage: dict) -> None:
+    battle_stage = copy.deepcopy(stage)
+    if battle_stage.get("boss_slot"):
+        boss = st.session_state.selected_bosses.get(battle_stage["phase"])
+        if boss:
+            battle_stage["boss"] = boss
+    st.session_state.boss_messages = []
     battle = start_battle(
         st.session_state.crew,
-        stage,
+        battle_stage,
         excluded_groups=set(st.session_state.faced_enemy_groups),
+        crew_statuses=st.session_state.crew_statuses,
     )
     st.session_state.battle = battle
     group = battle["stage"]["enemy_group"]
@@ -796,7 +930,7 @@ def begin_battle(stage: dict) -> None:
     else:
         st.session_state.last_battle_result = {
             "status": "defeat",
-            "message": f"A tripulação foi derrotada em {stage['name']}.",
+            "message": f"A tripulação foi derrotada em {battle_stage['name']}.",
         }
     st.session_state.battle_frames = frames
     st.session_state.battle_frame_index = 0
@@ -863,6 +997,7 @@ def render_recruitment() -> None:
         if fighter["name"] not in crew_names()
         and alive_roles.intersection(fighter["roles"])
         and fighter.get("recruitment_chance") is not None
+        and not fighter.get("boss_member")
     ]
 
     st.subheader("Recrutamento")
@@ -976,11 +1111,11 @@ if st.session_state.imu_event_active:
 st.html(
     """
     <div class="hero">
-        <div class="hero-kicker">Saga East Blue</div>
+        <div class="hero-kicker">Blue e Paraíso</div>
         <div class="hero-title">Rota dos Mares</div>
         <div class="hero-copy">
-            Forme sua tripulação, vença os conflitos do East Blue e abra caminho
-            até a Reverse Mountain.
+            Forme sua tripulação, vença os Blues, cruze a montanha e encare
+            os conflitos do Paraíso.
         </div>
     </div>
     """
@@ -1005,12 +1140,15 @@ def render_journey_view() -> None:
     top3.metric("Progresso", f"{st.session_state.stage_index}/{len(STAGES)}")
     top4.metric("Tripulantes", len(st.session_state.crew))
 
+    for message in st.session_state.boss_messages:
+        st.warning(message)
+
     render_map()
     st.write("")
 
     if st.session_state.stage_index >= len(STAGES):
         st.success(
-            "A tripulação alcançou a Reverse Mountain. A Grand Line está à frente."
+            "A tripulação venceu os Blues, cruzou a montanha e superou o Paraíso."
         )
     elif st.session_state.campaign_destroyed:
         st.error(
@@ -1050,10 +1188,19 @@ def render_journey_view() -> None:
         with col_info:
             st.subheader(stage["name"])
             st.write(stage["description"])
+            if stage.get("boss_slot"):
+                boss = st.session_state.selected_bosses.get(stage["phase"])
+                enemy_text = (
+                    f"Boss da parte: {boss['name']}."
+                    if boss
+                    else "Boss da parte."
+                )
+            else:
+                enemy_text = (
+                    "A filiação inimiga será sorteada ao iniciar o confronto."
+                )
             st.caption(
-                "A filiação inimiga será sorteada ao iniciar o confronto. "
-                "Filiações mais fortes tornam-se mais prováveis no fim da rota. "
-                "Até 6 inimigos • Recompensa: "
+                f"{enemy_text} Até 6 inimigos • Recompensa: "
                 f"{stage['reward']:,} berries".replace(",", ".")
             )
         with col_action:
@@ -1105,8 +1252,7 @@ def render_crew_view() -> None:
             type="primary",
             width="stretch",
             disabled=(
-                st.session_state.stage_index > 0
-                or crew_complete
+                crew_complete
                 or (has_candidate and rerolls_left <= 0)
             ),
             help=(

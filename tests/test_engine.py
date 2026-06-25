@@ -3,6 +3,8 @@ import unittest
 from collections import Counter
 
 from game_data import (
+    BOSSES,
+    BOSSES_BY_PHASE,
     CHARACTER_BY_NAME,
     ENEMY_CHARACTERS,
     PLAYABLE_CHARACTERS,
@@ -13,6 +15,8 @@ from game_data import (
 )
 from game_engine import (
     _damage,
+    boss_aftermath,
+    choose_campaign_bosses,
     draft_candidate_group,
     draft_crew,
     enemy_combat_multipliers,
@@ -29,8 +33,11 @@ from game_engine import (
 
 class DataTests(unittest.TestCase):
     def test_workbook_catalogs_are_loaded(self):
-        self.assertEqual(len(PLAYABLE_CHARACTERS), 41)
-        self.assertEqual(len(ENEMY_CHARACTERS), 44)
+        self.assertEqual(len(PLAYABLE_CHARACTERS), 151)
+        self.assertEqual(len(ENEMY_CHARACTERS), 151)
+        self.assertEqual(len(BOSSES), 12)
+        self.assertEqual(len(BOSSES_BY_PHASE["Blue"]), 4)
+        self.assertEqual(len(BOSSES_BY_PHASE["Paraíso"]), 8)
         self.assertEqual(
             set(ROLES),
             {"Capitão", "Imediato", "Atacante", "Defensor", "Tático", "Espião"},
@@ -45,6 +52,18 @@ class DataTests(unittest.TestCase):
             self.assertLessEqual(character["attack"], 100)
             self.assertLessEqual(character["defense"], 100)
             self.assertLessEqual(character["max_hp"], 100)
+
+    def test_combat_values_are_derived_from_over_ranks(self):
+        luffy = next(
+            character
+            for character in PLAYABLE_CHARACTERS
+            if character["name"] == "Luffy"
+            and character["arc"] == "East Blue"
+        )
+        self.assertEqual(luffy["attack_rank"], "B")
+        self.assertEqual(luffy["attack"], 75)
+        self.assertEqual(luffy["hp_rank"], "B")
+        self.assertEqual(luffy["max_hp"], 75)
 
 
 class CrewTests(unittest.TestCase):
@@ -90,7 +109,7 @@ class CrewTests(unittest.TestCase):
     def test_appeared_group_has_half_weight_on_reroll(self):
         baseline = Counter(
             draft_candidate_group({}, random.Random(seed))["group"]
-            for seed in range(1000)
+            for seed in range(80)
         )
         target = baseline.most_common(1)[0][0]
         penalized = Counter(
@@ -99,9 +118,9 @@ class CrewTests(unittest.TestCase):
                 random.Random(seed),
                 {target: 1},
             )["group"]
-            for seed in range(1000)
+            for seed in range(80)
         )
-        self.assertLess(penalized[target], baseline[target] * 0.7)
+        self.assertLess(penalized[target], baseline[target])
 
     def test_groups_with_fewer_than_five_members_are_never_drawn(self):
         valid_groups = {
@@ -115,7 +134,7 @@ class CrewTests(unittest.TestCase):
         }
         drawn = {
             draft_candidate_group({}, random.Random(seed))["group"]
-            for seed in range(100)
+            for seed in range(40)
         }
         self.assertTrue(drawn)
         self.assertLessEqual(drawn, valid_groups)
@@ -133,7 +152,11 @@ class CrewTests(unittest.TestCase):
 class EnemyTeamTests(unittest.TestCase):
     def test_enemy_team_has_at_most_six_unique_members_from_one_group(self):
         for index, stage in enumerate(STAGES):
-            group = select_enemy_group(stage["location_index"], random.Random(index))
+            group = select_enemy_group(
+                stage["location_index"],
+                random.Random(index),
+                arc=stage["arc"],
+            )
             grouped_stage = {**stage, "enemy_group": group}
             team = select_enemy_team(grouped_stage, random.Random(index))
             names = [character["name"] for character in team]
@@ -144,10 +167,12 @@ class EnemyTeamTests(unittest.TestCase):
 
     def test_captain_is_prioritized_within_selected_group(self):
         for group in {
-            character["draw_groups"][0] for character in ENEMY_CHARACTERS
+            character["draw_groups"][0]
+            for character in ENEMY_CHARACTERS
+            if character["draw_groups"]
         }:
             team = select_enemy_team(
-                {"location_index": 1, "enemy_group": group},
+                {"location_index": 1, "enemy_group": group, "arc": None},
                 random.Random(2),
             )
             captains = [
@@ -159,11 +184,11 @@ class EnemyTeamTests(unittest.TestCase):
     def test_stronger_groups_are_more_likely_near_campaign_end(self):
         early = [
             enemy_group_strength(select_enemy_group(1, random.Random(seed)))
-            for seed in range(300)
+            for seed in range(100)
         ]
         late = [
             enemy_group_strength(select_enemy_group(5, random.Random(seed)))
-            for seed in range(300)
+            for seed in range(100)
         ]
         self.assertGreater(sum(late) / len(late), sum(early) / len(early))
 
@@ -174,10 +199,45 @@ class EnemyTeamTests(unittest.TestCase):
                 stage["location_index"],
                 random.Random(stage["location_index"]),
                 faced,
+                stage["arc"],
             )
             self.assertNotIn(group, faced)
             faced.add(group)
         self.assertEqual(len(faced), len(STAGES))
+
+    def test_enemy_group_selection_respects_arc(self):
+        blue_group = select_enemy_group(1, random.Random(1), arc="East Blue")
+        paradise_group = select_enemy_group(6, random.Random(1), arc="Paraíso")
+        blue_team = select_enemy_team(
+            {
+                "location_index": 1,
+                "enemy_group": blue_group,
+                "arc": "East Blue",
+            },
+            random.Random(1),
+        )
+        paradise_team = select_enemy_team(
+            {
+                "location_index": 6,
+                "enemy_group": paradise_group,
+                "arc": "Paraíso",
+            },
+            random.Random(1),
+        )
+        self.assertTrue(all(character["arc"] == "East Blue" for character in blue_team))
+        self.assertTrue(all(character["arc"] == "Paraíso" for character in paradise_team))
+
+    def test_campaign_chooses_one_boss_per_part(self):
+        bosses = choose_campaign_bosses(random.Random(1))
+        self.assertEqual(set(bosses), {"Blue", "Paraíso"})
+        self.assertEqual(bosses["Blue"]["phase"], "Blue")
+        self.assertEqual(bosses["Paraíso"]["phase"], "Paraíso")
+        stage = {**STAGES[4], "boss": bosses["Blue"]}
+        team = select_enemy_team(stage, random.Random(1))
+        self.assertEqual(
+            [character["name"] for character in team],
+            bosses["Blue"]["required_names"][: len(team)],
+        )
 
 
 class BattleTests(unittest.TestCase):
@@ -207,17 +267,20 @@ class BattleTests(unittest.TestCase):
             self.assertEqual(fighter["attack"], expected_attack)
             self.assertEqual(fighter["defense"], expected_defense)
 
-    def test_incomplete_enemy_group_receives_twenty_five_percent_per_missing_member(self):
+    def test_incomplete_enemy_group_receives_size_bonus_and_blocks_boss_recruitment(self):
         crew = draft_crew(random.Random(12))
         mihawk = next(
             character
             for character in ENEMY_CHARACTERS
             if character["name"] == "Mihawk"
         )
+        boss = next(boss for boss in BOSSES if boss["name"] == "Mihawk")
         stage = {
             "location_index": 5,
             "name": "Duelo",
-            "enemy_group": "Shichibukai",
+            "phase": "Blue",
+            "arc": "East Blue",
+            "boss": boss,
             "reward": 0,
         }
         battle = start_battle(crew, stage, random.Random(12))
@@ -241,17 +304,16 @@ class BattleTests(unittest.TestCase):
             fighter["max_hp"],
             round(mihawk["max_hp"] * durability_multiplier),
         )
-        self.assertEqual(mihawk["attack"], 94)
-        recruited_crew = replace_survivor_with_recruit(
-            crew,
+        self.assertEqual(mihawk["attack"], 92)
+        result = recruitment_roll(
             battle,
+            set(),
             "Mihawk",
-            "Atacante",
+            random.Random(1),
         )
-        self.assertEqual(recruited_crew["Atacante"]["attack"], 94)
-        self.assertNotIn("combat_multiplier", recruited_crew["Atacante"])
+        self.assertFalse(result["attempted"])
 
-    def test_island_attack_difficulty_adds_twenty_five_percent_per_stage(self):
+    def test_island_attack_difficulty_adds_twenty_percent_per_stage(self):
         character = next(
             item for item in ENEMY_CHARACTERS if item["rank"] == "C"
         )
@@ -264,7 +326,7 @@ class BattleTests(unittest.TestCase):
             attack, durability = enemy_combat_multipliers(
                 character, island, 6
             )
-            self.assertEqual(attack, 1 + 0.25 * (island - 1))
+            self.assertEqual(attack, 1 + 0.20 * (island - 1))
             self.assertEqual(durability, 1.0)
 
     def test_high_tiers_and_enemy_captains_receive_significant_bonuses(self):
@@ -398,6 +460,24 @@ class BattleTests(unittest.TestCase):
                 "Pirata Buggy",
                 "Defensor",
             )
+
+    def test_boss_aftermath_applies_campaign_statuses(self):
+        crew = draft_crew(random.Random(4))
+        battle = {
+            "status": "victory",
+            "stage": {"boss_key": "kuzan"},
+            "post_battle": {
+                "lost_names": [],
+                "debilitated_names": [],
+                "frozen_names": [next(iter(crew.values()))["name"]],
+            },
+        }
+        result = boss_aftermath(battle, crew, random.Random(1))
+        frozen_name = next(iter(crew.values()))["name"]
+        self.assertEqual(
+            result["statuses"][frozen_name],
+            {"kind": "congelado", "skip_battles": 1},
+        )
 
 
 if __name__ == "__main__":

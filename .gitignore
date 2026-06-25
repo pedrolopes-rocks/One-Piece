@@ -61,6 +61,7 @@ Thumbs.db
 
 # Resultados locais de simulações
 simulations/
+simulador/
 simulacoes/
 *.simulation.csv
 *.simulation.json
