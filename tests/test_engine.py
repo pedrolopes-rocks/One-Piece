@@ -36,7 +36,7 @@ from game_engine import (
 class DataTests(unittest.TestCase):
     def test_workbook_catalogs_are_loaded(self):
         self.assertEqual(len(PLAYABLE_CHARACTERS), 151)
-        self.assertEqual(len(ENEMY_CHARACTERS), 151)
+        self.assertEqual(len(ENEMY_CHARACTERS), 152)
         self.assertEqual(len(BOSSES), 12)
         self.assertEqual(len(BOSSES_BY_PHASE["Blue"]), 4)
         self.assertEqual(len(BOSSES_BY_PHASE["Paraíso"]), 8)
@@ -347,7 +347,9 @@ class BattleTests(unittest.TestCase):
 
     def test_island_attack_difficulty_stops_growing_after_blue(self):
         character = next(
-            item for item in ENEMY_CHARACTERS if item["rank"] == "C"
+            item
+            for item in ENEMY_CHARACTERS
+            if item["rank"] == "C" and "Capitão" not in item["roles"]
         )
         first_attack, first_durability = enemy_combat_multipliers(
             character, 1, 6

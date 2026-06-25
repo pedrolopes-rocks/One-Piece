@@ -257,20 +257,37 @@ def _split_required_names(value: str) -> list[str]:
             name = "Benn Beckman"
         if name == "Kaliffa":
             name = "Kalifa"
+        if name == "Kalifa":
+            name = "Kaliffa"
+        if name == "Jesus Burgess":
+            name = "Jesus Burgress"
         names.append(name)
     return names
 
 
+def _required_names_from_boss_row(row: dict[str, str]) -> list[str]:
+    member_columns = ["C", "D", "E", "F", "G", "H"]
+    members = [
+        row.get(column, "").strip()
+        for column in member_columns
+        if row.get(column, "").strip() and row.get(column, "").strip() != "-"
+    ]
+    if len(members) > 1 or row.get("J"):
+        return _split_required_names(" - ".join(members))
+    return _split_required_names(row.get("C", ""))
+
+
 def _boss_from_row(row: dict[str, str]) -> dict:
-    phase = row.get("D", "")
+    phase = row.get("J") or row.get("D", "")
     return {
         "id": f"{phase}:{row['A']}:{row.get('B', '')}",
         "name": row["A"],
         "faction": row.get("B", ""),
-        "required_names": _split_required_names(row.get("C", "")),
+        "member_faction": row.get("I", ""),
+        "required_names": _required_names_from_boss_row(row),
         "phase": phase,
         "arc": PHASE_TO_ARC.get(phase, phase),
-        "effect": row.get("E", ""),
+        "effect": row.get("K") or row.get("E", ""),
     }
 
 

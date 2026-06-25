@@ -408,6 +408,26 @@ h2, h3 { color: #ffe4a3 !important; }
 }
 .battle-score .enemy-title { text-align: right; }
 .battle-score strong { color: #23805d; font-size: 1.45rem; }
+.enemy-title.boss-title {
+    color: #d7322d;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+}
+.boss-banner {
+    margin: .8rem 0 0;
+    padding: .65rem .8rem;
+    border-radius: 10px;
+    background: #3d1718;
+    border: 1px solid #d7322d;
+    color: #ffd7bd;
+    font: 800 .78rem/1.35 "Inter", sans-serif;
+    letter-spacing: .03em;
+}
+.boss-note {
+    margin-top: .45rem;
+    color: #ffe6d8;
+    font-weight: 700;
+}
 .battle-lineups {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -680,13 +700,35 @@ def battle_board_html(battle: dict) -> str:
     player_alive = sum(fighter["alive"] for fighter in battle["player"])
     enemy_alive = sum(fighter["alive"] for fighter in battle["enemies"])
     group = battle["stage"]["enemy_group"]
+    is_boss = bool(battle["stage"].get("boss_key"))
+    enemy_title = (
+        f"☠ BOSS · {html.escape(group)}"
+        if is_boss
+        else html.escape(group)
+    )
+    enemy_class = "enemy-title boss-title" if is_boss else "enemy-title"
+    boss_banner = ""
+    if is_boss:
+        boss_name = battle["stage"].get("boss", {}).get("name", group)
+        boss_banner = (
+            '<div class="boss-banner">'
+            f'☠ Você encontrou um BOSS: {html.escape(boss_name)}'
+            '</div>'
+        )
+    post_battle_notes = "".join(
+        f'<div class="boss-note">{html.escape(message)}</div>'
+        for message in st.session_state.get("boss_messages", [])
+        if battle["status"] == "victory"
+    )
     return f"""
     <div class="battle-panel">
         <div class="battle-score">
             <div>SUA EQUIPE</div>
             <strong>{player_alive} – {enemy_alive}</strong>
-            <div class="enemy-title">{html.escape(group)}</div>
+            <div class="{enemy_class}">{enemy_title}</div>
         </div>
+        {boss_banner}
+        {post_battle_notes}
         <div class="battle-lineups">
             {lineup(battle["player"], "player")}
             {lineup(battle["enemies"], "enemy")}
@@ -1173,9 +1215,6 @@ def render_journey_view() -> None:
     top3.metric("Progresso", f"{st.session_state.stage_index}/{len(STAGES)}")
     top4.metric("Tripulantes", len(st.session_state.crew))
 
-    for message in st.session_state.boss_messages:
-        st.warning(message)
-
     render_map()
     st.write("")
 
@@ -1231,7 +1270,8 @@ def render_journey_view() -> None:
                 boss = st.session_state.selected_bosses.get(stage["phase"])
                 if boss:
                     st.markdown(
-                        "Boss da parte: "
+                        "☠ Encontro de "
+                        "<span style='color:#ff4b43;font-weight:900'>BOSS</span>: "
                         f"<span style='color:#ff4b43;font-weight:800'>"
                         f"{html.escape(boss['name'])}</span>.",
                         unsafe_allow_html=True,
